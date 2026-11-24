@@ -25,7 +25,7 @@ Hook lines in upstream files are kept to one to a few lines each, so merges stay
 
 1. Fast-forwards `main` to `upstream/main` and pushes it.
 2. Merges `upstream/main` into `agy`. Conflicts in `pnpm-lock.yaml` and the web and mobile i18n catalogs take upstream's side; any other conflict fails the run.
-3. Reinstalls (refreshing the lockfile if it was taken from upstream), runs `vp run i18n:generate`, and commits what changed.
+3. Reinstalls (refreshing the lockfile if it was taken from upstream), runs `vp run -r i18n:generate`, and commits what changed.
 4. Runs the hook check, typechecks contracts, client-runtime, server, web (and mobile when it has fork files), and runs the fork's tests.
 5. Pushes `agy` only if every step passed.
 
@@ -38,7 +38,7 @@ git fetch upstream
 git checkout main && git merge --ff-only upstream/main && git push origin main
 git checkout agy && git merge upstream/main
 # fix conflicts, keep the fork's hook lines, prefer upstream where it did the same thing
-vp install && vp run i18n:generate
+vp install && vp run -r i18n:generate
 node scripts/agy/check-hooks.ts
 vp run check:changed
 git push origin agy
