@@ -38,6 +38,7 @@ import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { ProceedPlanButton } from "../../agy/ProceedPlanButton";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -46,6 +47,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  onProceed,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -53,6 +55,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  /** Set only on the latest actionable plan. */
+  onProceed?: (() => Promise<void>) | undefined;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -240,6 +244,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             </Button>
           </div>
         ) : null}
+        {onProceed ? <ProceedPlanButton onProceed={onProceed} /> : null}
       </div>
 
       <Dialog

@@ -11,6 +11,7 @@ import { captureAssistantMessageOpening } from "~/lib/assistantTextSelection";
 import { responseContextRecord } from "~/lib/composerContextRecords";
 import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
+import { PROCEED_WITH_PLAN_MESSAGE } from "../../agy/ProceedPlanButton";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
 import { readResponseSubagents, useAssistantMessageText } from "../../state/entities";
@@ -349,6 +350,11 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
+        onProceed={
+          row.proposedPlan.status === "active" && ctx.canOperateThread && ctx.onSendAppMessage
+            ? () => ctx.onSendAppMessage?.(PROCEED_WITH_PLAN_MESSAGE) ?? Promise.resolve()
+            : undefined
+        }
       />
     </div>
   );

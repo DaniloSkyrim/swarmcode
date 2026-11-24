@@ -51,6 +51,7 @@ import {
   Files,
   Globe2,
   MessagesSquare,
+  Network,
   Plus,
   TerminalSquare,
   Volume2Icon,
@@ -158,6 +159,8 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Absent where there is no swarm board to show. */
+  onAddSwarm?: (() => void) | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -167,6 +170,7 @@ export interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  swarmAvailable?: boolean;
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
@@ -196,6 +200,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: msg("This thread's branch has no pull request yet."),
   pullRequests: msg("This thread has no linked items."),
   device: msg("Devices are only available from a thread."),
+  swarm: msg("The swarm board is only available from a server thread."),
   sideChat: msg("Side chats start after the first message."),
 } as const;
 
@@ -221,6 +226,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: msg("No pull request on this branch yet."),
   pullRequests: msg("No linked items available."),
   device: msg("Available from a thread."),
+  swarm: msg("Available from a server thread."),
   sideChat: msg("Available after the first message."),
 } as const;
 
@@ -344,6 +350,8 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Absent where there is no swarm board to show. */
+  onAddSwarm?: (() => void) | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -353,6 +361,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  swarmAvailable?: boolean;
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
 }) {
@@ -418,6 +427,19 @@ function RightPanelEmptyState(props: {
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.device),
       onClick: props.onAddDevice,
     },
+    ...(props.onAddSwarm
+      ? [
+          {
+            label: msg("Swarm"),
+            description: msg("Watch agents talk on a shared board."),
+            icon: Network,
+            shortcut: "W",
+            available: props.swarmAvailable === true,
+            disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.swarm),
+            onClick: props.onAddSwarm,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -618,6 +640,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return resolve(msg("Linked items"));
+    case "swarm":
+      return resolve(msg("Swarm"));
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
@@ -719,6 +743,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "swarm":
+      return <Network className="size-3 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "thread":
@@ -1260,6 +1286,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: messages(SURFACE_DISABLED_REASONS.device),
       onClick: props.onAddDevice,
     },
+    ...(props.onAddSwarm
+      ? [
+          {
+            label: msg("Swarm"),
+            icon: Network,
+            shortcut: "W",
+            available: props.swarmAvailable === true,
+            disabledReason: messages(SURFACE_DISABLED_REASONS.swarm),
+            onClick: props.onAddSwarm,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -1697,6 +1735,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            onAddSwarm={props.onAddSwarm}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1705,6 +1744,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
+            swarmAvailable={props.swarmAvailable === true}
             sideChatAvailable={props.sideChatAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />

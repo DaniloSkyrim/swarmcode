@@ -70,6 +70,7 @@ import {
   isSlashCommandMessage,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
+import { expandAgyMessage } from "../agy/agyPromptExpansion.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1080,22 +1081,27 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const messageText = withMessageSenderNote(
-        providerMessage,
-        projectComposerContextForProvider({
-          text: providerMessage.text,
-          records: providerMessage.context?.records ?? [],
-        }),
-      );
-      const slashCommand = isSlashCommandMessage(providerMessage);
       const goalDriver =
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
-      const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
+      // Fork: Antigravity-style commands the provider lacks become instructions.
+      const turnMessage = expandAgyMessage(providerMessage, {
+        driver: session.driver,
+        nativeGoals: goalDriver,
+      });
+      const messageText = withMessageSenderNote(
+        turnMessage,
+        projectComposerContextForProvider({
+          text: turnMessage.text,
+          records: turnMessage.context?.records ?? [],
+        }),
+      );
+      const slashCommand = isSlashCommandMessage(turnMessage);
+      const goalCommand = goalDriver && parseGoalCommand(turnMessage) !== null;
       // Part of the user text, so every way a turn starts carries it, after the user's own words.
       const userText =
-        run.outputSchema === undefined || goalCommand || isProviderCommand(providerMessage)
+        run.outputSchema === undefined || goalCommand || isProviderCommand(turnMessage)
           ? messageText
           : `${messageText}\n\n${outputInstructions(run.outputSchema)}`;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.

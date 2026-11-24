@@ -77,6 +77,9 @@ import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { WorkflowToolkit } from "./toolkits/workflow/tools.ts";
 import * as WorkflowHandlers from "./toolkits/workflow/handlers.ts";
+import { SwarmToolkit } from "./toolkits/swarm/tools.ts";
+import * as AgySwarm from "../agy/swarm/AgySwarm.ts";
+import * as SwarmHandlers from "./toolkits/swarm/handlers.ts";
 import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -1635,6 +1638,11 @@ export const layerMilestoneEvents = Layer.effectDiscard(
   Layer.provide(layerWebhookTransport),
 );
 
+// Fork: the swarm board tools, kept out of layerTools and its budget test.
+const layerSwarmToolkit = toolkitRegistration(SwarmToolkit, SwarmHandlers.layer).pipe(
+  Layer.provide(AgySwarm.layer),
+);
+
 export const layer = layerMcpTransport(
-  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents),
+  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents, layerSwarmToolkit),
 );

@@ -48,6 +48,7 @@ import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
+import { AgyWsSwarmSubscribeRpc } from "./agy.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -2716,4 +2717,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
+  AgyWsSwarmSubscribeRpc,
 ).middleware(RpcScopeAuthorization);

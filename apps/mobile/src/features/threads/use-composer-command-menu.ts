@@ -69,6 +69,7 @@ import type { ModelOption } from "../../lib/modelOptions";
 import { m, type MessageResolver } from "../../i18n/messages";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { agySlashCommandItems } from "./agy-slash-commands";
 
 const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
   Atom.withLabel("mobile:provider-workspace-snapshot-refresh:idle"),
@@ -181,6 +182,13 @@ export function buildComposerSlashCommandItems(
       description: command.description ?? "",
     });
   }
+  items.push(
+    ...agySlashCommandItems({
+      query,
+      providerSlashCommands: input.selectedProviderStatus?.slashCommands ?? [],
+      resolve,
+    }),
+  );
   return items;
 }
 

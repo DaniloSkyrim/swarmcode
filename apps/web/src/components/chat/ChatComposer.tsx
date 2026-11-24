@@ -120,6 +120,12 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
+import { AGY_MENU_ITEM_ID_PREFIX } from "../../agy/agyMenuItems";
+import { useAgyUiCommands } from "../../agy/useAgyUiCommands";
+import {
+  agyNativeCommandNames,
+  agyUiCommandRunsOnSelect,
+} from "@t3tools/client-runtime/agyComposerCommands";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   type QueuedAttachmentContextBinding,
@@ -1215,11 +1221,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
+  const agyUi = useAgyUiCommands({
+    environmentId,
+    routeThreadRef,
+    activeThread,
+    activeThreadRuns,
+    timelineEntries: promptHistoryEntries,
+    activeProjectId,
+    canOperateThread,
+    nativeNames: agyNativeCommandNames(selectedProviderSlashCommands),
+    onUsageLimitsCommand: props.onUsageLimitsCommand,
+    openEffortControl: () => composerRef.current?.openControl("composer.effort"),
+  });
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
+    agy: { prompt, uiAvailable: agyUi.uiAvailable },
     composerTrigger,
     environmentId,
     linkedEnvironments,
@@ -2120,6 +2139,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "provider-slash-command") {
+      if (
+        item.id.startsWith(AGY_MENU_ITEM_ID_PREFIX) &&
+        agyUiCommandRunsOnSelect(item.command.name)
+      ) {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          agyUi.run(item.command.name);
+        }
+        return;
+      }
       if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),

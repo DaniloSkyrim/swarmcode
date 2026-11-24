@@ -77,6 +77,7 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
   PlugIcon,
@@ -269,6 +270,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
+import { openSwarmSurface } from "./swarm/openSwarmSurface";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
@@ -1533,6 +1535,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  if (activeThread) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-swarm",
+      searchTerms: ["swarm", "boost", "teamwork", "agents", "board", "members"],
+      title: gt("Show swarm board"),
+      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "swarm.toggle",
+      run: async () => {
+        openSwarmSurface(threadRef);
       },
     });
   }

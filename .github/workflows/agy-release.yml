@@ -1,0 +1,161 @@
+name: Agy release
+
+# Fork only. After a successful "Agy sync" (or by hand), builds an unsigned Windows
+# NSIS installer of the desktop app from the tip of `agy`, rebranded as Swarmcode (see
+# TRADEMARK.md), and publishes it as a GitHub prerelease with the nightly auto-update
+# feed (nightly.yml). See docs/agy-fork.md.
+
+on:
+  workflow_run:
+    workflows: ["Agy sync"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even when this agy commit already has a release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agy-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Find agy commit
+    if: github.repository != 'pingdotgg/t3code' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.agy.outputs.sha }}
+      skip: ${{ steps.agy.outputs.skip }}
+    steps:
+      - id: agy
+        name: Resolve agy and look for an existing release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/agy" --jq .sha)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          skip=false
+          if [[ "$FORCE" != "true" ]] && gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '.[].body // ""' | grep -q "agy-commit: $sha"; then
+            echo "agy $sha already has a release; nothing to build."
+            skip=true
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and publish Windows installer
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # The app's updater follows this repository's releases, not upstream's.
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+      # Builds outside pingdotgg/t3code report "dev" telemetry, as release.yml does.
+      T3CODE_TELEMETRY_CHANNEL: dev
+    steps:
+      - name: Enable long paths
+        shell: bash
+        run: git config --system core.longpaths true
+
+      - name: Checkout agy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      # Same public T3 Connect ids as a release preview build, read from .env.example.
+      - name: Load T3 Connect public config
+        shell: bash
+        run: |
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_$name=||p" .env.example)"
+            if [[ -n "$value" ]]; then echo "T3CODE_$name=$value" >> "$GITHUB_ENV"; fi
+          done
+
+      # Upstream's nightly base version, a run number above upstream's (see docs/agy-fork.md),
+      # so this build sorts after upstream's latest nightly.
+      - id: release_meta
+        name: Resolve version
+        shell: bash
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          node scripts/resolve-nightly-release.ts \
+            --date "$(date -u +%Y%m%d)" \
+            --run-number "$((100000 + RUN_NUMBER))" \
+            --sha "$(git rev-parse HEAD)" \
+            --github-output
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ steps.release_meta.outputs.version }}"
+
+      # Published forks must not carry T3 Code's name or icons; this renames the app,
+      # its copy, and its icons, and fails if upstream moved one of those spots.
+      - name: Rebrand as Swarmcode
+        run: node scripts/agy/apply-brand.ts
+
+      - name: Build desktop pipeline
+        run: vp run build:desktop
+
+      # Unsigned, and without the WSL runtime (that archive needs the Linux CLI build).
+      - name: Build Windows installer
+        shell: bash
+        run: |
+          vp run dist:desktop:artifact \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "${{ steps.release_meta.outputs.version }}" \
+            --skip-build \
+            --verbose
+
+      - name: Check the update feed file
+        shell: bash
+        run: |
+          ls -la release
+          [[ -f release/nightly.yml ]] || { echo "::error::release/nightly.yml missing, so installs could not auto-update."; exit 1; }
+          ls release/*.exe
+
+      - name: Publish prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_meta.outputs.tag }}
+          VERSION: ${{ steps.release_meta.outputs.version }}
+          AGY_SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          {
+            echo "Swarmcode is an unofficial fork of T3 Code. It is not affiliated with, endorsed by, or maintained by T3 Tools, Inc."
+            echo
+            echo "Unsigned Windows build: Windows SmartScreen will warn on first install. Installed copies update themselves from these releases."
+            echo
+            echo "agy-commit: $AGY_SHA"
+          } > "$RUNNER_TEMP/notes.md"
+          assets=(release/*.exe release/*.blockmap)
+          for feed in release/*.yml; do
+            [[ "$feed" == */builder-debug.yml ]] || assets+=("$feed")
+          done
+          gh release create "$TAG" "${assets[@]}" \
+            --target "$AGY_SHA" \
+            --prerelease \
+            --title "Swarmcode Nightly $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md"

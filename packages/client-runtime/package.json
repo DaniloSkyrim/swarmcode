@@ -35,6 +35,10 @@
       "types": "./src/savedViews.ts",
       "default": "./src/savedViews.ts"
     },
+    "./agyComposerCommands": {
+      "types": "./src/agyComposerCommands.ts",
+      "default": "./src/agyComposerCommands.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -294,6 +298,10 @@
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
+    },
+    "./state/agy-swarm": {
+      "types": "./src/state/agySwarm.ts",
+      "default": "./src/state/agySwarm.ts"
     },
     "./state/device": {
       "types": "./src/state/device.ts",

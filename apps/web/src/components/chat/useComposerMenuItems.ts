@@ -56,6 +56,7 @@ import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
+import { agySlashCommandItems } from "../../agy/agyMenuItems";
 
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
@@ -83,6 +84,7 @@ export function useComposerMenuItems({
   workspaceSkillsScanning,
   questionAttachmentTarget,
   modelMentions,
+  agy,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
   readonly environmentId: EnvironmentId;
@@ -102,6 +104,8 @@ export function useComposerMenuItems({
   readonly showSkillsInSlashMenu: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
+  /** Fork: the prompt and the UI commands the composer can run, for the Antigravity commands. */
+  readonly agy: { readonly prompt: string; readonly uiAvailable: ReadonlySet<string> };
   readonly modelMentions: {
     readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
     readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
@@ -328,6 +332,16 @@ export function useComposerMenuItems({
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
         composerTrigger.rangeStart === 0,
+      );
+      slashCommandItems.push(
+        ...agySlashCommandItems({
+          provider: selectedProvider,
+          providerSlashCommands: selectedProviderSlashCommands,
+          prompt: agy.prompt,
+          rangeStart: composerTrigger.rangeStart,
+          uiAvailable: agy.uiAvailable,
+          resolve: messages,
+        }),
       );
       return searchSlashCommandItems(slashCommandItems, query);
     }

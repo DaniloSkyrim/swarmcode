@@ -88,6 +88,23 @@ describe("mobile slash commands", () => {
     ).toEqual({ text: "/plan ", cursor: 6 });
   });
 
+  it("adds the fork's prompt commands at the message start unless the provider has them", () => {
+    const build = (atMessageStart: boolean) =>
+      buildComposerSlashCommandItems({
+        query: "s",
+        atMessageStart,
+        hasThread: true,
+        selectedProviderStatus: {
+          driver: ProviderDriverKind.make("codex"),
+          slashCommands: [{ name: "swarm" }],
+        },
+      }).map((item) => item.label);
+    expect(build(true)).toContain("/schedule");
+    expect(build(true)).not.toContain("/swarm board");
+    expect(build(true).filter((label) => label === "/swarm")).toHaveLength(1);
+    expect(build(false)).not.toContain("/schedule");
+  });
+
   it("offers T3's /clear in place of the provider's, only at the message start", () => {
     const claude = {
       driver: ProviderDriverKind.make("claudeAgent"),

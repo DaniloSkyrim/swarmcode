@@ -1,0 +1,130 @@
+{
+  "forkFiles": [
+    ".github/README.md",
+    "apps/mobile/src/features/threads/agy-slash-commands.ts",
+    "apps/server/src/agy/agyPromptExpansion.test.ts",
+    "apps/server/src/agy/agyPromptExpansion.ts",
+    "apps/server/src/agy/agyPrompts.ts",
+    "apps/server/src/agy/swarm/AgySwarm.ts",
+    "apps/server/src/agy/swarm/swarmBoard.test.ts",
+    "apps/server/src/agy/swarm/swarmBoard.ts",
+    "apps/server/src/mcp/toolkits/swarm/handlers.ts",
+    "apps/server/src/mcp/toolkits/swarm/tools.ts",
+    "apps/web/src/agy/ProceedPlanButton.tsx",
+    "apps/web/src/agy/agyMenuItems.ts",
+    "apps/web/src/agy/useAgyUiCommands.ts",
+    "apps/web/src/components/swarm/SwarmPanel.tsx",
+    "apps/web/src/components/swarm/openSwarmSurface.ts",
+    "apps/web/src/components/swarm/useSwarmSurface.ts",
+    "apps/web/src/state/agySwarm.ts",
+    "packages/client-runtime/src/agyComposerCommands.ts",
+    "packages/client-runtime/src/state/agySwarm.ts",
+    "packages/contracts/src/agy.ts",
+    "scripts/agy/apply-brand.ts",
+    "scripts/agy/brand/swarmcode-windows.ico"
+  ],
+  "hooks": [
+    {
+      "file": "packages/contracts/src/index.ts",
+      "snippets": ["export * from \"./agy.ts\";"]
+    },
+    {
+      "file": "packages/contracts/src/rpc.ts",
+      "snippets": [
+        "import { AgyWsSwarmSubscribeRpc } from \"./agy.ts\";",
+        "  AgyWsSwarmSubscribeRpc,"
+      ]
+    },
+    {
+      "file": "packages/client-runtime/src/rpc/client.ts",
+      "snippets": ["typeof AGY_WS_METHODS.swarmSubscribe"]
+    },
+    {
+      "file": "apps/server/src/server.ts",
+      "snippets": ["Layer.provide(AgySwarm.layer)"]
+    },
+    {
+      "file": "apps/server/src/ws.ts",
+      "snippets": [
+        "[AGY_WS_METHODS.swarmSubscribe]",
+        "Layer.succeed(AgySwarm.AgySwarm, agySwarm.value)"
+      ]
+    },
+    {
+      "file": "apps/server/src/auth/RpcAuthorization.ts",
+      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]"]
+    },
+    {
+      "file": "apps/server/src/observability/RpcInstrumentation.ts",
+      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]"]
+    },
+    {
+      "file": "apps/server/src/mcp/McpHttpServer.ts",
+      "snippets": ["layerMilestoneEvents, layerSwarmToolkit"]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
+      "snippets": ["expandAgyMessage("]
+    },
+    {
+      "file": "apps/web/src/rightPanelStore.ts",
+      "snippets": ["{ id: \"swarm\"; kind: \"swarm\" }"]
+    },
+    {
+      "file": "apps/web/src/closedViewStore.ts",
+      "snippets": ["case \"swarm\":"]
+    },
+    {
+      "file": "apps/web/src/components/RightPanelTabs.tsx",
+      "snippets": ["onAddSwarm"]
+    },
+    {
+      "file": "packages/contracts/src/keybindings.ts",
+      "snippets": ["\"swarm.toggle\""]
+    },
+    {
+      "file": "packages/client-runtime/package.json",
+      "snippets": ["\"./agyComposerCommands\"", "\"./state/agy-swarm\""]
+    },
+    {
+      "file": "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
+      "snippets": ["import(\"../swarm/SwarmPanel\")"]
+    },
+    {
+      "file": "apps/web/src/components/ChatView.tsx",
+      "snippets": ["useSwarmSurface(", "onAddSwarm={swarmSurface.addSwarmSurface}"]
+    },
+    {
+      "file": "apps/web/src/components/CommandPalette.tsx",
+      "snippets": ["openSwarmSurface(threadRef)"]
+    },
+    {
+      "file": "apps/web/src/components/settings/KeybindingsSettings.logic.ts",
+      "snippets": ["\"swarm.toggle\""]
+    },
+    {
+      "file": "apps/web/src/components/chat/useComposerMenuItems.ts",
+      "snippets": ["agySlashCommandItems("]
+    },
+    {
+      "file": "apps/web/src/components/chat/ChatComposer.tsx",
+      "snippets": ["useAgyUiCommands(", "AGY_MENU_ITEM_ID_PREFIX"]
+    },
+    {
+      "file": "apps/web/src/components/chat/useComposerSend.ts",
+      "snippets": ["agyInteractionModeForText", "runAgyUiCommandText("]
+    },
+    {
+      "file": "apps/web/src/components/chat/ProposedPlanCard.tsx",
+      "snippets": ["<ProceedPlanButton"]
+    },
+    {
+      "file": "apps/web/src/components/chat/TimelineAssistantRows.tsx",
+      "snippets": ["PROCEED_WITH_PLAN_MESSAGE"]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/use-composer-command-menu.ts",
+      "snippets": ["agySlashCommandItems("]
+    }
+  ]
+}
