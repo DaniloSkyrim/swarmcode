@@ -2,6 +2,7 @@
   "forkFiles": [
     ".github/README.md",
     "apps/mobile/src/features/threads/agy-slash-commands.ts",
+    "apps/mobile/src/state/agySwarm.ts",
     "apps/server/src/agy/agyPromptExpansion.test.ts",
     "apps/server/src/agy/agyPromptExpansion.ts",
     "apps/server/src/agy/agyPrompts.ts",
@@ -34,13 +35,17 @@
     {
       "file": "packages/contracts/src/rpc.ts",
       "snippets": [
-        "import { AgyWsSwarmSubscribeRpc } from \"./agy.ts\";",
-        "  AgyWsSwarmSubscribeRpc,"
+        "import { AgyWsSwarmActiveSubscribeRpc, AgyWsSwarmSubscribeRpc } from \"./agy.ts\";",
+        "  AgyWsSwarmSubscribeRpc,",
+        "  AgyWsSwarmActiveSubscribeRpc,"
       ]
     },
     {
       "file": "packages/client-runtime/src/rpc/client.ts",
-      "snippets": ["typeof AGY_WS_METHODS.swarmSubscribe"]
+      "snippets": [
+        "typeof AGY_WS_METHODS.swarmSubscribe",
+        "typeof AGY_WS_METHODS.swarmActiveSubscribe"
+      ]
     },
     {
       "file": "apps/server/src/server.ts",
@@ -50,16 +55,17 @@
       "file": "apps/server/src/ws.ts",
       "snippets": [
         "[AGY_WS_METHODS.swarmSubscribe]",
+        "[AGY_WS_METHODS.swarmActiveSubscribe]",
         "Layer.succeed(AgySwarm.AgySwarm, agySwarm.value)"
       ]
     },
     {
       "file": "apps/server/src/auth/RpcAuthorization.ts",
-      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]"]
+      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]", "[AGY_WS_METHODS.swarmActiveSubscribe]"]
     },
     {
       "file": "apps/server/src/observability/RpcInstrumentation.ts",
-      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]"]
+      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]", "[AGY_WS_METHODS.swarmActiveSubscribe]"]
     },
     {
       "file": "apps/server/src/mcp/McpHttpServer.ts",
@@ -188,6 +194,57 @@
     {
       "file": "packages/shared/src/keybindings.ts",
       "snippets": ["{ key: \"alt+s\", command: \"swarm.toggle\", when: \"!terminalFocus\" },"]
+    },
+    {
+      "file": "packages/client-runtime/src/state/threadInbox.ts",
+      "snippets": [
+        "export function isThreadWorking(thread: WorkingThreadInput, activeSwarm = false): boolean {",
+        "isExtraWorking?: (thread: WorkingThreadInput & ThreadKeyInput) => boolean,"
+      ]
+    },
+    {
+      "file": "apps/web/src/components/Sidebar.logic.ts",
+      "snippets": ["| \"swarming\"", "if (options?.activeSwarm === true) {"]
+    },
+    {
+      "file": "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
+      "snippets": [
+        "useActiveSwarmStartedAt(thread.environmentId, thread.id)",
+        "status === \"swarming\""
+      ]
+    },
+    {
+      "file": "apps/web/src/components/sidebar/SidebarProjectFolderHeader.tsx",
+      "snippets": [
+        "useActiveSwarmThreads(",
+        "isSwarmActive: (thread) => hasActiveSwarm(activeSwarms, thread)"
+      ]
+    },
+    {
+      "file": "apps/web/src/components/Sidebar.tsx",
+      "snippets": [
+        "useActiveSwarmThreads(connectedEnvironmentIds)",
+        "hasActiveSwarm(activeSwarms, thread)"
+      ]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/useThreadListV2.ts",
+      "snippets": ["useActiveSwarmThreads(", "hasActiveSwarm(activeSwarms, thread)"]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/threadListV2.ts",
+      "snippets": ["| \"swarming\"", "if (options?.activeSwarm === true) {"]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/thread-row-emphasis.ts",
+      "snippets": ["input.status === \"swarming\""]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+      "snippets": [
+        "useActiveSwarmStartedAt(thread.environmentId, thread.id)",
+        "msg(\"Swarming\", { $context: \"thread status\" })"
+      ]
     }
   ]
 }

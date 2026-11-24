@@ -1,5 +1,10 @@
-// Fork: the swarm board of a thread, read live from the environment.
-import { createAgySwarmEnvironmentAtoms } from "@t3tools/client-runtime/state/agy-swarm";
+// Fork: the swarm board of a thread and environment-wide active swarm state, read live.
+import { useAtomValue } from "@effect/atom-react";
+import {
+  activeSwarmEnvironmentIdsKey,
+  createAgySwarmEnvironmentAtoms,
+  extractActiveSwarmStartedAt,
+} from "@t3tools/client-runtime/state/agy-swarm";
 import type { AgySwarmSnapshot, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
 
@@ -27,4 +32,21 @@ export function useAgySwarm(
     resolve,
   );
   return { swarm: query.data, loaded: query.isSuccess, error: query.error };
+}
+
+export function useActiveSwarmThreads(
+  environmentIds: Iterable<EnvironmentId>,
+): ReadonlyMap<string, string> {
+  return useAtomValue(
+    agySwarmEnvironment.activeSwarmsAcross(activeSwarmEnvironmentIdsKey(environmentIds)),
+  );
+}
+
+export function useActiveSwarmStartedAt(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): string | null {
+  return useAtomValue(agySwarmEnvironment.activeSwarms({ environmentId, input: {} }), (result) =>
+    extractActiveSwarmStartedAt(result, threadId),
+  );
 }

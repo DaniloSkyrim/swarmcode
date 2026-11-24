@@ -51,6 +51,7 @@ import {
   FolderGit2Icon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
@@ -82,6 +83,7 @@ import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useSidebarLinkedIssueState } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
+import { useActiveSwarmStartedAt } from "../../state/agySwarm";
 import { threadEnvironment } from "../../state/threads";
 import {
   readEnvironmentScope,
@@ -585,6 +587,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
+  swarming: NetworkIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
   request: UserRoundIcon,
@@ -798,8 +801,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
 
+  const activeSwarmStartedAt = useActiveSwarmStartedAt(thread.environmentId, thread.id);
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarRowStatus({ ...thread, lastVisitedAt });
+  const status = resolveSidebarRowStatus(
+    { ...thread, lastVisitedAt },
+    { activeSwarm: activeSwarmStartedAt !== null },
+  );
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -825,55 +832,61 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           icon: "working" as const,
           className: "text-info-foreground",
         }
-      : status === "waiting"
+      : status === "swarming"
         ? {
-            label: gt("Waiting", { $context: "thread status" }),
-            icon: "waiting" as const,
-            className: "text-muted-foreground",
+            label: gt("Swarming", { $context: "thread status" }),
+            icon: "swarming" as const,
+            className: "text-violet-700 dark:text-violet-300",
           }
-        : status === "approval"
+        : status === "waiting"
           ? {
-              label: gt("Approval", { $context: "thread status: needs approval" }),
-              icon: "approval" as const,
-              className: "text-warning-foreground",
+              label: gt("Waiting", { $context: "thread status" }),
+              icon: "waiting" as const,
+              className: "text-muted-foreground",
             }
-          : status === "input"
+          : status === "approval"
             ? {
-                label: gt("Input", { $context: "thread status: needs user input" }),
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
+                label: gt("Approval", { $context: "thread status: needs approval" }),
+                icon: "approval" as const,
+                className: "text-warning-foreground",
               }
-            : status === "request"
+            : status === "input"
               ? {
-                  label: gt("Request", { $context: "thread status: guest request" }),
-                  icon: "request" as const,
-                  className: "text-guest-foreground",
+                  label: gt("Input", { $context: "thread status: needs user input" }),
+                  icon: "input" as const,
+                  className: "text-indigo-600 dark:text-indigo-300",
                 }
-              : status === "limited"
+              : status === "request"
                 ? {
-                    label: gt("Limited", { $context: "thread status: usage limited" }),
-                    icon: "failed" as const,
-                    className: "text-warning-foreground",
+                    label: gt("Request", { $context: "thread status: guest request" }),
+                    icon: "request" as const,
+                    className: "text-guest-foreground",
                   }
-                : status === "failed"
+                : status === "limited"
                   ? {
-                      label: gt("Failed", { $context: "thread status" }),
+                      label: gt("Limited", { $context: "thread status: usage limited" }),
                       icon: "failed" as const,
-                      className: "text-error-foreground",
+                      className: "text-warning-foreground",
                     }
-                  : isWoke
+                  : status === "failed"
                     ? {
-                        label: gt("Woke", { $context: "thread status: woke from snooze" }),
-                        icon: "woke" as const,
-                        className: "text-warning-foreground",
+                        label: gt("Failed", { $context: "thread status" }),
+                        icon: "failed" as const,
+                        className: "text-error-foreground",
                       }
-                    : isUnread
+                    : isWoke
                       ? {
-                          label: gt("Done", { $context: "thread status" }),
-                          icon: "done" as const,
-                          className: "text-success-foreground",
+                          label: gt("Woke", { $context: "thread status: woke from snooze" }),
+                          icon: "woke" as const,
+                          className: "text-warning-foreground",
                         }
-                      : null;
+                      : isUnread
+                        ? {
+                            label: gt("Done", { $context: "thread status" }),
+                            icon: "done" as const,
+                            className: "text-success-foreground",
+                          }
+                        : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1651,6 +1664,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                               <WorkingDuration
                                 environmentId={thread.environmentId}
                                 startedAt={resolveWorkingStartedAt(thread)}
+                              />
+                            </span>
+                          ) : status === "swarming" ? (
+                            <span aria-hidden>
+                              <WorkingDuration
+                                environmentId={thread.environmentId}
+                                startedAt={activeSwarmStartedAt ?? resolveWorkingStartedAt(thread)}
                               />
                             </span>
                           ) : status === "waiting" ? (

@@ -14,9 +14,10 @@ type WorkingThreadInput = Pick<
   | "runtime"
 >;
 
-export function isThreadWorking(thread: WorkingThreadInput): boolean {
+export function isThreadWorking(thread: WorkingThreadInput, activeSwarm = false): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
+  if (activeSwarm) return true;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   const run = thread.latestRun;
   const runSettled =
@@ -149,7 +150,7 @@ export function createInboxReturnTracker() {
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
   const states = new Map<
     string,
-    { working: boolean; deadline: number | null; placement: string | null }
+    { working: boolean; extraWorking: boolean; deadline: number | null; placement: string | null }
   >();
   const returns = new Map<string, number>();
   const listeners = new Set<() => void>();
@@ -192,7 +193,10 @@ export function createInboxReturnTracker() {
       };
     },
     getSnapshot: () => version,
-    observe(threads: readonly TrackedInboxThread[] | null): {
+    observe(
+      threads: readonly TrackedInboxThread[] | null,
+      isExtraWorking?: (thread: WorkingThreadInput & ThreadKeyInput) => boolean,
+    ): {
       readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
       readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
     } {
@@ -201,7 +205,10 @@ export function createInboxReturnTracker() {
         timer = undefined;
         states.clear();
         returns.clear();
-        return { isWorking: isThreadWorking, returnedAt: () => undefined };
+        return {
+          isWorking: (thread) => isThreadWorking(thread, isExtraWorking?.(thread) === true),
+          returnedAt: () => undefined,
+        };
       }
       const present = new Set<string>();
       const at = now();
@@ -211,7 +218,8 @@ export function createInboxReturnTracker() {
         const key = keyOf(thread);
         present.add(key);
         const previous = states.get(key);
-        const actual = isThreadWorking(thread);
+        const extraWorking = isExtraWorking?.(thread) === true;
+        const actual = isThreadWorking(thread, extraWorking);
         const placement =
           actual || previous?.working
             ? JSON.stringify([
@@ -242,14 +250,20 @@ export function createInboxReturnTracker() {
           effectiveSnoozed(thread, { now: observedAt });
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         const endedAt = toSortableTimestamp(thread.latestRun?.completedAt ?? undefined);
-        const endedLongAgo = endedAt !== null && endedAt <= at - STALE_EXIT_MS;
+        const endedLongAgo =
+          !previous?.extraWorking && endedAt !== null && endedAt <= at - STALE_EXIT_MS;
         const deadline =
           !actual && previous?.working && !actionable && !moved && !excluded && !endedLongAgo
             ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
         const working = actual || (deadline !== null && deadline > at);
         if (previous?.working && !working) returns.set(key, at);
-        states.set(key, { working, deadline: working ? deadline : null, placement });
+        states.set(key, {
+          working,
+          extraWorking: actual && extraWorking,
+          deadline: working ? deadline : null,
+          placement,
+        });
       }
       for (const key of states.keys()) {
         if (!present.has(key)) {
@@ -262,7 +276,9 @@ export function createInboxReturnTracker() {
       states.forEach((state, key) => observedWorking.set(key, state.working));
       const observedReturns = new Map(returns);
       return {
-        isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? isThreadWorking(thread),
+        isWorking: (thread) =>
+          observedWorking.get(keyOf(thread)) ??
+          isThreadWorking(thread, isExtraWorking?.(thread) === true),
         returnedAt: (thread) => observedReturns.get(keyOf(thread)),
       };
     },

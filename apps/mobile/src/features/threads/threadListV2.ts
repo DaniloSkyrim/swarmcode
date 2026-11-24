@@ -73,6 +73,7 @@ export type ThreadListV2Status =
   | "input"
   | "request"
   | "working"
+  | "swarming"
   | "waiting"
   | "failed"
   | "limited"
@@ -281,6 +282,7 @@ export function resolveThreadListV2Status(
     | "runtime"
     | "blockedOnThreadWait"
   >,
+  options?: { readonly activeSwarm?: boolean },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
@@ -291,6 +293,9 @@ export function resolveThreadListV2Status(
   // A guest is waiting on the owner; the agent's own requests come first.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
+  }
+  if (options?.activeSwarm === true) {
+    return "swarming";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
@@ -346,8 +351,9 @@ export function threadListV2RowAccessibilityLabel(
 export function resolveThreadListV2RowStatus(
   thread: Parameters<typeof resolveThreadListV2Status>[0] &
     Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  options?: { readonly activeSwarm?: boolean },
 ): ThreadListV2Status {
-  const status = resolveThreadListV2Status(thread);
+  const status = resolveThreadListV2Status(thread, options);
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";

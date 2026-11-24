@@ -11,6 +11,7 @@ import {
 } from "./thread-list-v2-row-appearance";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
+import { useActiveSwarmStartedAt } from "../../state/agySwarm";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
@@ -129,6 +130,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     icon: "circle.dashed",
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  swarming: {
+    label: msg("Swarming", { $context: "thread status" }),
+    icon: "point.3.connected.trianglepath.dotted",
+    className: "text-adaptive-violet-600-400",
+    iconTintClassName: "accent-adaptive-violet-600-400",
   },
   waiting: {
     label: null,
@@ -870,8 +877,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const rawStatus = resolveThreadListV2Status(thread);
-  const status = resolveThreadListV2RowStatus(thread);
+  const activeSwarmStartedAt = useActiveSwarmStartedAt(thread.environmentId, thread.id);
+  const rawStatus = resolveThreadListV2Status(thread, {
+    activeSwarm: activeSwarmStartedAt !== null,
+  });
+  const status = resolveThreadListV2RowStatus(thread, {
+    activeSwarm: activeSwarmStartedAt !== null,
+  });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
@@ -1481,6 +1493,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   <ThreadListV2Duration
                     environmentId={thread.environmentId}
                     startedAt={resolveThreadWorkingStartedAt(thread)}
+                    leadingSpace={statusLabel.label !== null}
+                  />
+                ) : status === "swarming" ? (
+                  <ThreadListV2Duration
+                    environmentId={thread.environmentId}
+                    startedAt={activeSwarmStartedAt ?? resolveThreadWorkingStartedAt(thread)}
                     leadingSpace={statusLabel.label !== null}
                   />
                 ) : status === "waiting" ? (
