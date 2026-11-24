@@ -820,7 +820,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
-  const topStatus =
+  const upstreamTopStatus =
     status === "preparing" || status === "working"
       ? {
           label:
@@ -832,61 +832,63 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           icon: "working" as const,
           className: "text-info-foreground",
         }
-      : status === "swarming"
+      : status === "waiting"
         ? {
-            label: gt("Swarming", { $context: "thread status" }),
-            icon: "swarming" as const,
-            className: "text-violet-700 dark:text-violet-300",
+            label: gt("Waiting", { $context: "thread status" }),
+            icon: "waiting" as const,
+            className: "text-muted-foreground",
           }
-        : status === "waiting"
+        : status === "approval"
           ? {
-              label: gt("Waiting", { $context: "thread status" }),
-              icon: "waiting" as const,
-              className: "text-muted-foreground",
+              label: gt("Approval", { $context: "thread status: needs approval" }),
+              icon: "approval" as const,
+              className: "text-warning-foreground",
             }
-          : status === "approval"
+          : status === "input"
             ? {
-                label: gt("Approval", { $context: "thread status: needs approval" }),
-                icon: "approval" as const,
-                className: "text-warning-foreground",
+                label: gt("Input", { $context: "thread status: needs user input" }),
+                icon: "input" as const,
+                className: "text-indigo-600 dark:text-indigo-300",
               }
-            : status === "input"
+            : status === "request"
               ? {
-                  label: gt("Input", { $context: "thread status: needs user input" }),
-                  icon: "input" as const,
-                  className: "text-indigo-600 dark:text-indigo-300",
+                  label: gt("Request", { $context: "thread status: guest request" }),
+                  icon: "request" as const,
+                  className: "text-guest-foreground",
                 }
-              : status === "request"
+              : status === "limited"
                 ? {
-                    label: gt("Request", { $context: "thread status: guest request" }),
-                    icon: "request" as const,
-                    className: "text-guest-foreground",
+                    label: gt("Limited", { $context: "thread status: usage limited" }),
+                    icon: "failed" as const,
+                    className: "text-warning-foreground",
                   }
-                : status === "limited"
+                : status === "failed"
                   ? {
-                      label: gt("Limited", { $context: "thread status: usage limited" }),
+                      label: gt("Failed", { $context: "thread status" }),
                       icon: "failed" as const,
-                      className: "text-warning-foreground",
+                      className: "text-error-foreground",
                     }
-                  : status === "failed"
+                  : isWoke
                     ? {
-                        label: gt("Failed", { $context: "thread status" }),
-                        icon: "failed" as const,
-                        className: "text-error-foreground",
+                        label: gt("Woke", { $context: "thread status: woke from snooze" }),
+                        icon: "woke" as const,
+                        className: "text-warning-foreground",
                       }
-                    : isWoke
+                    : isUnread
                       ? {
-                          label: gt("Woke", { $context: "thread status: woke from snooze" }),
-                          icon: "woke" as const,
-                          className: "text-warning-foreground",
+                          label: gt("Done", { $context: "thread status" }),
+                          icon: "done" as const,
+                          className: "text-success-foreground",
                         }
-                      : isUnread
-                        ? {
-                            label: gt("Done", { $context: "thread status" }),
-                            icon: "done" as const,
-                            className: "text-success-foreground",
-                          }
-                        : null;
+                      : null;
+  const topStatus =
+    status === "swarming"
+      ? {
+          label: gt("Swarming", { $context: "thread status" }),
+          icon: "swarming" as const,
+          className: "text-violet-700 dark:text-violet-300",
+        }
+      : upstreamTopStatus;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({

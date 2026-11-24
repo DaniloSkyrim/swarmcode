@@ -210,7 +210,7 @@
       "file": "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
       "snippets": [
         "useActiveSwarmStartedAt(thread.environmentId, thread.id)",
-        "status === \"swarming\""
+        ": upstreamTopStatus;"
       ]
     },
     {
