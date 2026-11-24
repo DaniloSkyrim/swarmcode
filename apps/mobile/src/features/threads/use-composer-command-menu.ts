@@ -69,6 +69,7 @@ import type { ModelOption } from "../../lib/modelOptions";
 import { m, type MessageResolver } from "../../i18n/messages";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { agyKeepsProviderCommand } from "@t3tools/client-runtime/agyComposerCommands";
 import { agySlashCommandItems } from "./agy-slash-commands";
 
 const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
@@ -162,6 +163,7 @@ export function buildComposerSlashCommandItems(
   }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
+    if (!agyKeepsProviderCommand(command)) continue;
     if (command.name === "clear" && input.offersFreshSession) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {

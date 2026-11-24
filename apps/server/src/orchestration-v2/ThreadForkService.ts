@@ -60,6 +60,7 @@ export interface ThreadForkServiceV2Shape {
     readonly targetThreadId: ThreadId;
     readonly title?: string;
     readonly sideChat?: boolean;
+    readonly swarmMember?: boolean;
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -125,6 +126,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           relationshipToParent: "fork",
           rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
           ...(input.sideChat ? { sideChat: true } : {}),
+          ...(input.swarmMember ? { swarmMember: true } : {}),
         },
         forkedFrom:
           sourceRun === null

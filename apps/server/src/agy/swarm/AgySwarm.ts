@@ -131,6 +131,8 @@ const STATE_EVENT_PREFIXES = [
   "runtime-request.",
   "thread.archive",
   "thread.unarchive",
+  "thread.model-selection-updated",
+  "thread.provider-switched",
 ];
 
 /** Everything a snapshot shows, cheaply, so an unchanged swarm is never sent twice. */
@@ -160,10 +162,27 @@ const fingerprint = (snapshot: AgySwarmSnapshot | null) =>
           )
           .join(","),
       ].join("\n");
-const ACTIVE_STATUSES: ReadonlyArray<string> = ThreadManagementService.ACTIVE_RUN_STATUSES;
+const BUSY_STATUSES: ReadonlyArray<string> = [
+  ...ThreadManagementService.ACTIVE_RUN_STATUSES,
+  "queued",
+];
 const STOPPED_STATUSES: ReadonlyArray<string> = ["failed", "interrupted", "cancelled"];
+/** Posts a wake message quotes; older unread ones are left to read_board. */
+const WAKE_POSTS_SHOWN = 3;
 
 const modelLabel = (selection: ModelSelection) => `${selection.instanceId}/${selection.model}`;
+/**
+ * A member's message travels like `t3_thread_send`: the client folds it under the sender's name
+ * and the model is told it is not from the user. A post with no member behind it is T3's own.
+ */
+const agentSent = (fromMember: boolean) =>
+  ({ createdBy: "agent", creationSource: fromMember ? "mcp" : "server" }) as const;
+
+/** The thread's own selection wins, since the user can switch a member's model from the board. */
+const liveModel = (
+  member: { readonly model: string | null },
+  shell: { readonly modelSelection: ModelSelection } | null,
+) => (shell === null ? member.model : modelLabel(shell.modelSelection));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -181,8 +200,8 @@ const make = Effect.gen(function* () {
   const byThread = new Map<string, string>();
   /** Threads parked in `swarm_wait`: a post reaches them there, not as a queued message. */
   const parked = new Map<string, number>();
-  /** Threads that have a wake message queued and have not read the board since. */
-  const wakePending = new Set<string>();
+  /** The highest post each thread was last rung for. */
+  const rungSeq = new Map<string, number>();
   const changed = yield* PubSub.unbounded<string>();
   const lock = yield* Semaphore.make(1);
 
@@ -265,13 +284,18 @@ const make = Effect.gen(function* () {
     member: Board.StoredMember,
     shell: OrchestrationV2ThreadShell | null,
   ): { state: AgySwarmMemberState; activity: string | null } => {
-    if (member.killedAt !== null || shell === null || shell.archivedAt !== null) {
+    if (
+      member.killedAt !== null ||
+      shell === null ||
+      shell.archivedAt !== null ||
+      shell.deletedAt !== null
+    ) {
       return { state: "killed", activity: null };
     }
     if (shell.pendingRuntimeRequest !== null)
       return { state: "needs-input", activity: "Needs input" };
     if (parked.has(member.threadId)) return { state: "waiting", activity: "swarm_wait" };
-    if (shell.activeRunId !== null || ACTIVE_STATUSES.includes(shell.status)) {
+    if (shell.activeRunId !== null || BUSY_STATUSES.includes(shell.status)) {
       const latest = shell.latestVisibleMessage;
       return {
         state: "working",
@@ -305,13 +329,13 @@ const make = Effect.gen(function* () {
       doneAt: swarm.doneAt,
       plan: swarm.plan,
       channels: swarm.channels.map((channel) => ({ ...channel })),
-      members: states.map(({ member, state, activity }) => ({
+      members: states.map(({ member, shell, state, activity }) => ({
         name: member.name,
         threadId: ThreadId.make(member.threadId),
         role: member.role,
         addedBy: member.addedBy,
-        instanceId: member.instanceId,
-        model: member.model,
+        instanceId: shell?.modelSelection.instanceId ?? member.instanceId,
+        model: liveModel(member, shell),
         workspace: member.workspace,
         channels: [...member.channels],
         brief: member.brief,
@@ -360,40 +384,72 @@ const make = Effect.gen(function* () {
     } satisfies ModelSelection;
   });
 
-  /** Queues a wake on each target thread, once until it reads the board again. */
-  const deliver = Effect.fn("AgySwarm.deliver")(function* (
+  /**
+   * Rings a member for its unread posts, as Antigravity's board does: once, and only while it is
+   * idle. A member mid-turn is rung when that turn ends, so its thread never stacks queued wakes.
+   */
+  const ring = Effect.fn("AgySwarm.ring")(function* (
+    swarm: Board.StoredSwarm,
+    target: Board.StoredMember,
+  ) {
+    if (parked.has(target.threadId)) return;
+    // A turn that failed (quota, say) is not rung again until the board moves.
+    const unread = Board.unreadWakePosts(swarm, target, rungSeq.get(target.threadId) ?? 0);
+    if (unread.length === 0) return;
+    const shell = yield* shellOf(target.threadId);
+    if (
+      shell === null ||
+      shell.archivedAt !== null ||
+      shell.deletedAt !== null ||
+      shell.activeRunId !== null ||
+      BUSY_STATUSES.includes(shell.status)
+    ) {
+      return;
+    }
+    const shown = unread.slice(-WAKE_POSTS_SHOWN);
+    const latest = shown.at(-1);
+    if (latest === undefined) return;
+    const previousRungSeq = rungSeq.get(target.threadId);
+    rungSeq.set(target.threadId, target.lastWakeSeq);
+    const sender = Board.memberByName(swarm, latest.from);
+    const heading =
+      unread.length === 1
+        ? `[swarm] New on the board for you, ${target.name}:`
+        : `[swarm] ${unread.length} new posts on the board for you, ${target.name}` +
+          (unread.length > shown.length ? ` (latest ${shown.length} below):` : ":");
+    const text =
+      `${heading}\n${shown.map(Board.formatPost).join("\n\n")}\n\n` +
+      `Catch up with read_board{since:${target.lastReadSeq}} and act on what is yours. ` +
+      `If nothing is, end your turn.`;
+    yield* threads
+      .sendToThread({
+        projectId: ProjectId.make(swarm.projectId),
+        commandId: CommandId.make(`agy-swarm:${swarm.id}:wake:${target.name}:${latest.seq}`),
+        messageId: MessageId.make(`agy-swarm:${swarm.id}:wake:${target.name}:${latest.seq}`),
+        threadId: ThreadId.make(target.threadId),
+        ...(sender === undefined ? {} : { senderThreadId: ThreadId.make(sender.threadId) }),
+        text,
+        attachments: [],
+        mode: "queue",
+        ...agentSent(sender !== undefined),
+      })
+      .pipe(
+        Effect.catchCause((cause) => {
+          if (previousRungSeq === undefined) rungSeq.delete(target.threadId);
+          else rungSeq.set(target.threadId, previousRungSeq);
+          return Effect.logWarning("agy swarm wake failed", { member: target.name, cause });
+        }),
+      );
+  });
+
+  const saveAndDeliver = Effect.fn("AgySwarm.saveAndDeliver")(function* (
     swarm: Board.StoredSwarm,
     post: Board.StoredPost,
   ) {
-    const sender = Board.memberByName(swarm, post.from);
-    for (const target of Board.wakeTargets(swarm, post)) {
-      target.lastWakeSeq = post.seq;
-      if (parked.has(target.threadId) || wakePending.has(target.threadId)) continue;
-      wakePending.add(target.threadId);
-      const text =
-        `[swarm] New on the board for you, ${target.name}:\n${Board.formatPost(post)}\n\n` +
-        `Catch up with read_board{since:${target.lastReadSeq}} and act on what is yours. ` +
-        `If nothing is, end your turn.`;
-      yield* threads
-        .sendToThread({
-          projectId: ProjectId.make(swarm.projectId),
-          commandId: CommandId.make(`agy-swarm:${swarm.id}:wake:${target.name}:${post.seq}`),
-          messageId: MessageId.make(`agy-swarm:${swarm.id}:wake:${target.name}:${post.seq}`),
-          threadId: ThreadId.make(target.threadId),
-          ...(sender === undefined ? {} : { senderThreadId: ThreadId.make(sender.threadId) }),
-          text,
-          attachments: [],
-          mode: "queue",
-          createdBy: "system",
-          creationSource: "server",
-        })
-        .pipe(
-          Effect.catchCause((cause) => {
-            wakePending.delete(target.threadId);
-            return Effect.logWarning("agy swarm wake failed", { member: target.name, cause });
-          }),
-        );
-    }
+    const targets = Board.wakeTargets(swarm, post);
+    for (const target of targets) target.lastWakeSeq = post.seq;
+    yield* save(swarm);
+    for (const target of targets) yield* ring(swarm, target);
   });
 
   const appendAndDeliver = Effect.fn("AgySwarm.appendAndDeliver")(function* (
@@ -401,8 +457,7 @@ const make = Effect.gen(function* () {
     input: Parameters<typeof Board.appendPost>[1],
   ) {
     const post = yield* appendOrRefuse(swarm, input);
-    yield* save(swarm);
-    yield* deliver(swarm, post);
+    yield* saveAndDeliver(swarm, post);
     return post;
   });
 
@@ -420,6 +475,16 @@ const make = Effect.gen(function* () {
   ) {
     const adderShell = yield* shellOf(adder.threadId);
     if (adderShell === null) return yield* refuse("Your thread was not found.");
+    // Members live under the thread that started the swarm, not in thread lists.
+    const coordinatorShell =
+      swarm.coordinatorThreadId === adder.threadId
+        ? adderShell
+        : yield* shellOf(swarm.coordinatorThreadId);
+    const swarmLineage = {
+      parentThreadId: ThreadId.make(swarm.coordinatorThreadId),
+      rootThreadId:
+        coordinatorShell?.lineage.rootThreadId ?? ThreadId.make(swarm.coordinatorThreadId),
+    };
     const threadId = ThreadId.make(yield* randomUuidV4);
     const commandId = CommandId.make(`agy-swarm:${swarm.id}:add:${spec.name}`);
     const title = `${swarm.title} · ${spec.name}`;
@@ -434,6 +499,7 @@ const make = Effect.gen(function* () {
           targetThreadId: threadId,
           sourcePoint: { type: "latest_stable" },
           title,
+          swarmMember: true,
           createdBy: "system",
           creationSource: "server",
         })
@@ -453,8 +519,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           modelSelection: spec.model,
           mode: "queue",
-          createdBy: "system",
-          creationSource: "server",
+          ...agentSent(true),
         })
         .pipe(
           Effect.mapError(
@@ -481,6 +546,7 @@ const make = Effect.gen(function* () {
         projectId: adderShell.projectId,
         title,
         titleRenamed: true,
+        swarmLineage,
         modelSelection: spec.model,
         runtimeMode: adderShell.runtimeMode,
         interactionMode: "default",
@@ -491,8 +557,7 @@ const make = Effect.gen(function* () {
           text,
           attachments: [],
         },
-        createdBy: "system",
-        creationSource: "server",
+        ...agentSent(true),
       })
       .pipe(
         Effect.mapError(
@@ -505,9 +570,10 @@ const make = Effect.gen(function* () {
   const status: AgySwarmShape["status"] = Effect.fn("AgySwarm.status")(function* (callerThreadId) {
     const { swarm } = yield* requireMember(callerThreadId);
     const states = yield* memberStates(swarm);
-    const lines = states.map(({ member, state, activity }) => {
+    const lines = states.map(({ member, shell, state, activity }) => {
       const last = Board.lastPostSeq(swarm, member.name);
-      return `- ${member.name} (${member.role}${member.model === null ? "" : `, ${member.model}`}${member.workspace === "worktree" ? ", own worktree" : ""}): ${state}; last post ${last === null ? "none" : `#${last}`}; read up to #${member.lastReadSeq}${activity === null ? "" : `; ${activity.replace(/\s+/gu, " ").slice(0, 100)}`}`;
+      const model = liveModel(member, shell);
+      return `- ${member.name} (${member.role}${model === null ? "" : `, ${model}`}${member.workspace === "worktree" ? ", own worktree" : ""}): ${state}; last post ${last === null ? "none" : `#${last}`}; read up to #${member.lastReadSeq}${activity === null ? "" : `; ${activity.replace(/\s+/gu, " ").slice(0, 100)}`}`;
     });
     return `Swarm "${swarm.title}", board head #${Board.head(swarm)}${swarm.doneAt === null ? "" : ", done"}.\n${lines.join("\n")}`;
   });
@@ -644,9 +710,15 @@ const make = Effect.gen(function* () {
                 Effect.logWarning("agy swarm kill stop failed", { cause }),
               ),
             );
+          // A retired member keeps showing the model it last ran, not the one it was added with.
+          const shell = yield* shellOf(target.threadId);
+          if (shell !== null) {
+            target.model = modelLabel(shell.modelSelection);
+            target.instanceId = shell.modelSelection.instanceId;
+          }
           target.killedAt = yield* nowIso;
           parked.delete(target.threadId);
-          wakePending.delete(target.threadId);
+          rungSeq.delete(target.threadId);
           yield* appendOrRefuse(swarm, {
             from: caller.name,
             text: `killed ${target.name}`,
@@ -693,8 +765,7 @@ const make = Effect.gen(function* () {
             attachments: [],
             modelSelection: model,
             mode: "queue",
-            createdBy: "system",
-            creationSource: "server",
+            ...agentSent(true),
           })
           .pipe(
             Effect.mapError(
@@ -799,7 +870,6 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { swarm, member } = yield* ensureSwarm(callerThreadId);
         if (member.killedAt !== null) return yield* refuse("You were removed from this swarm.");
-        wakePending.delete(member.threadId);
         const created = yield* appendAndDeliver(swarm, {
           from: member.name,
           text: input.text,
@@ -821,7 +891,6 @@ const make = Effect.gen(function* () {
         });
         const last = posts.at(-1)?.seq;
         if (last !== undefined && last > member.lastReadSeq) member.lastReadSeq = last;
-        wakePending.delete(member.threadId);
         yield* save(swarm);
         return {
           posts: posts.length === 0 ? "(no new posts)" : posts.map(Board.formatPost).join("\n"),
@@ -853,14 +922,25 @@ const make = Effect.gen(function* () {
     parked.set(member.threadId, (parked.get(member.threadId) ?? 0) + 1);
     member.wakeOnAny = !mentionsOnly;
     yield* PubSub.publish(changed, swarm.id);
-    const found = yield* Effect.gen(function* () {
-      while (relevant().length === 0) {
-        const next = yield* PubSub.take(subscription);
-        if (next !== swarm.id) continue;
-      }
-      return relevant();
+    // Stay parked until lastReadSeq is recorded under the lock so saveAndDeliver cannot ring in the gap.
+    const { posts, timedOut } = yield* Effect.gen(function* () {
+      const found = yield* Effect.gen(function* () {
+        while (relevant().length === 0) {
+          const next = yield* PubSub.take(subscription);
+          if (next !== swarm.id) continue;
+        }
+        return relevant();
+      }).pipe(Effect.timeoutOption(timeout));
+      const matched = found._tag === "Some" ? found.value : [];
+      yield* locked(
+        Effect.gen(function* () {
+          const last = matched.at(-1)?.seq;
+          if (last !== undefined && last > member.lastReadSeq) member.lastReadSeq = last;
+          yield* save(swarm);
+        }),
+      );
+      return { posts: matched, timedOut: found._tag === "None" };
     }).pipe(
-      Effect.timeoutOption(timeout),
       Effect.ensuring(
         Effect.sync(() => {
           const count = (parked.get(member.threadId) ?? 1) - 1;
@@ -870,19 +950,10 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.andThen(PubSub.publish(changed, swarm.id))),
       ),
     );
-    const posts = found._tag === "Some" ? found.value : [];
-    yield* locked(
-      Effect.gen(function* () {
-        const last = posts.at(-1)?.seq;
-        if (last !== undefined && last > member.lastReadSeq) member.lastReadSeq = last;
-        wakePending.delete(member.threadId);
-        yield* save(swarm);
-      }),
-    );
     return {
       posts: posts.length === 0 ? "(nothing yet)" : posts.map(Board.formatPost).join("\n"),
       head: Board.head(swarm),
-      timedOut: found._tag === "None",
+      timedOut,
     };
   });
 
@@ -952,8 +1023,7 @@ const make = Effect.gen(function* () {
             lastAt: now,
             headAtAlert: post.seq,
           };
-          yield* save(swarm);
-          yield* deliver(swarm, post);
+          yield* saveAndDeliver(swarm, post);
         }),
       );
     }
@@ -963,6 +1033,31 @@ const make = Effect.gen(function* () {
 
   yield* forkParked(
     Effect.sleep(MONITOR_INTERVAL).pipe(Effect.andThen(monitorOnce), Effect.forever),
+  );
+
+  // A member that finishes a turn with posts it has not read is rung for them then.
+  yield* forkParked(
+    threads.streamDomainEvents.pipe(
+      Stream.filter(
+        (event) =>
+          event.type === "run.updated" &&
+          !BUSY_STATUSES.includes(event.payload.status) &&
+          byThread.has(event.threadId),
+      ),
+      Stream.catchCause(() => Stream.empty),
+      Stream.runForEach((event) =>
+        locked(
+          Effect.gen(function* () {
+            const found = callerOf(ThreadId.make(event.threadId));
+            if (found !== undefined) yield* ring(found.swarm, found.member);
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("agy swarm turn-end ring failed", { cause }),
+          ),
+        ),
+      ),
+    ),
   );
 
   return {

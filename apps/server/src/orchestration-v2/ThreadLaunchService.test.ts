@@ -3931,3 +3931,30 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+// Fork: swarm members live in their swarm's thread, so thread lists leave them out.
+it.effect("leaves swarm members out of the top-level list, under their swarm's thread", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const lead = yield* launches.launch(
+      launchInput({ command: "command:swarm-lead", thread: "thread:swarm-lead" }),
+    );
+    const member = yield* launches.launch({
+      ...launchInput({ command: "command:swarm-member", thread: "thread:swarm-member" }),
+      createdBy: "system",
+      creationSource: "server",
+      swarmLineage: { parentThreadId: lead.threadId, rootThreadId: lead.threadId },
+    });
+    const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: false });
+    assert.deepEqual(
+      listed.map((thread) => thread.id),
+      [lead.threadId],
+    );
+    assert.deepInclude(member.projection.thread.lineage, {
+      parentThreadId: lead.threadId,
+      swarmMember: true,
+    });
+  }).pipe(Effect.provide(harness.layer));
+});

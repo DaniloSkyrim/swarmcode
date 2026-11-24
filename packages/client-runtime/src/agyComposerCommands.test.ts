@@ -4,6 +4,7 @@ import {
   agyCommandsMayStack,
   agyHelpCommandNames,
   agyInteractionModeForText,
+  agyKeepsProviderCommand,
   agyMenuCommands,
   agyNativeCommandNames,
   agyUiCommandRunsOnSelect,
@@ -32,11 +33,15 @@ describe("agyMenuCommands", () => {
     expect(result).toContain("boost");
   });
 
-  it("hides the swarm board when the provider owns /swarm", () => {
-    const native = agyNativeCommandNames([{ name: "swarm" }]);
+  it("keeps the board commands when the provider advertises its own", () => {
+    const native = agyNativeCommandNames([{ name: "swarm" }, { name: "Boost" }, { name: "plan" }]);
     const result = names({ textBeforeTrigger: "", nativeNames: native, uiAvailable: allUi });
-    expect(result).not.toContain("swarm");
-    expect(result).not.toContain("swarm board");
+    expect(result).toContain("swarm");
+    expect(result).toContain("swarm board");
+    expect(result).toContain("boost");
+    expect(result).not.toContain("plan");
+    expect(agyKeepsProviderCommand({ name: "swarm" })).toBe(false);
+    expect(agyKeepsProviderCommand({ name: "plan" })).toBe(true);
   });
 
   it("stacks prompt commands after earlier ones and drops the ones already used", () => {

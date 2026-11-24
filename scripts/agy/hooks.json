@@ -5,6 +5,7 @@
     "apps/server/src/agy/agyPromptExpansion.test.ts",
     "apps/server/src/agy/agyPromptExpansion.ts",
     "apps/server/src/agy/agyPrompts.ts",
+    "apps/server/src/agy/swarm/AgySwarm.test.ts",
     "apps/server/src/agy/swarm/AgySwarm.ts",
     "apps/server/src/agy/swarm/swarmBoard.test.ts",
     "apps/server/src/agy/swarm/swarmBoard.ts",
@@ -14,6 +15,8 @@
     "apps/web/src/agy/agyMenuItems.ts",
     "apps/web/src/agy/useAgyUiCommands.ts",
     "apps/web/src/components/swarm/SwarmPanel.tsx",
+    "apps/web/src/components/swarm/ThreadSwarmSection.tsx",
+    "apps/web/src/components/swarm/SwarmMemberModelControls.tsx",
     "apps/web/src/components/swarm/openSwarmSurface.ts",
     "apps/web/src/components/swarm/useSwarmSurface.ts",
     "apps/web/src/state/agySwarm.ts",
@@ -104,7 +107,7 @@
     },
     {
       "file": "apps/web/src/components/chat/useComposerMenuItems.ts",
-      "snippets": ["agySlashCommandItems("]
+      "snippets": ["agySlashCommandItems(", "agyKeepsProviderCommand(item.command)"]
     },
     {
       "file": "apps/web/src/components/chat/ChatComposer.tsx",
@@ -124,7 +127,67 @@
     },
     {
       "file": "apps/mobile/src/features/threads/use-composer-command-menu.ts",
-      "snippets": ["agySlashCommandItems("]
+      "snippets": ["agySlashCommandItems(", "agyKeepsProviderCommand(command)"]
+    },
+    {
+      "file": "packages/contracts/src/orchestrationV2.ts",
+      "snippets": [
+        "swarmMember: Schema.optional(Schema.Boolean),",
+        "lineage.swarmMember !== true",
+        "swarmLineage: Schema.optional("
+      ]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "snippets": [
+        "{ ...command.swarmLineage, swarmMember: true }",
+        "...(command.swarmMember ? { swarmMember: true } : {}),"
+      ]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/ThreadForkService.ts",
+      "snippets": [
+        "readonly swarmMember?: boolean;",
+        "...(input.swarmMember ? { swarmMember: true } : {}),"
+      ]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/ThreadLaunchService.ts",
+      "snippets": ["readonly swarmLineage?:", "{ swarmLineage: input.swarmLineage }"]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/ThreadManagementService.ts",
+      "snippets": [
+        "swarmLineage: _swarmLineage,",
+        "const { swarmMember: _swarmMember, ...rest } = command;"
+      ]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/ProjectionStore.ts",
+      "snippets": [
+        "AS swarm_member",
+        "{ swarmMember: true }",
+        "indexedField(\"$.lineage.swarmMember\")",
+        "AND json_extract(t.payload_json, '$.lineage.swarmMember') IS NOT 1"
+      ]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/ThreadSearch.ts",
+      "snippets": ["AND json_extract(threads.payload_json, '$.lineage.swarmMember') IS NOT 1"]
+    },
+    {
+      "file": "packages/client-runtime/src/state/threadRelationships.ts",
+      "snippets": ["if (thread.lineage.swarmMember === true) continue;"]
+    },
+    {
+      "file": "apps/web/src/components/chat/ThreadDetailsPanel.tsx",
+      "snippets": [
+        "<ThreadSwarmSection environmentId={props.environmentId} threadId={props.threadId} />"
+      ]
+    },
+    {
+      "file": "packages/shared/src/keybindings.ts",
+      "snippets": ["{ key: \"alt+s\", command: \"swarm.toggle\", when: \"!terminalFocus\" },"]
     }
   ]
 }

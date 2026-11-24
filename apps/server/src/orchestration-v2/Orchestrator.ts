@@ -4149,6 +4149,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         relationshipToParent: null,
         rootThreadId: command.threadId,
         ...(command.workflowRun === undefined ? {} : { workflowStep: true }),
+        ...(command.swarmLineage === undefined
+          ? {}
+          : { ...command.swarmLineage, swarmMember: true }),
       },
       forkedFrom: null,
       createdAt: now,
@@ -6208,6 +6211,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
         ...(command.sideChat ? { sideChat: true } : {}),
+        ...(command.swarmMember ? { swarmMember: true } : {}),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

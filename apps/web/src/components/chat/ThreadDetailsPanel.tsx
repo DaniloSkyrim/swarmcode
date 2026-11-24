@@ -28,6 +28,7 @@ import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadRepositorySections } from "./ThreadRepositorySections";
 import { ThreadServersPanel } from "./ThreadServersPanel";
+import { ThreadSwarmSection } from "../swarm/ThreadSwarmSection";
 import {
   ThreadDetailsContext,
   ThreadDetailsUsage,
@@ -315,6 +316,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   environmentId={props.environmentId}
                   threadId={props.threadId}
                 />
+              ) : null}
+
+              {density === "full" && props.isServerThread && !props.draftId ? (
+                <ThreadSwarmSection environmentId={props.environmentId} threadId={props.threadId} />
               ) : null}
 
               {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (

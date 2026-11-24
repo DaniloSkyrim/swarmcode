@@ -127,6 +127,8 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
   /** The workflow run this thread is an agent step of. */
   readonly workflowRun?: OrchestrationV2WorkflowOrigin;
+  /** Fork: places the thread under its swarm's thread instead of in thread lists. */
+  readonly swarmLineage?: { readonly parentThreadId: ThreadId; readonly rootThreadId: ThreadId };
 }
 
 type PreparationInput = Pick<
@@ -1502,6 +1504,7 @@ const make = Effect.gen(function* () {
                   ? {}
                   : { delegatedFrom: input.delegatedFrom }),
                 ...(input.workflowRun === undefined ? {} : { workflowRun: input.workflowRun }),
+                ...(input.swarmLineage === undefined ? {} : { swarmLineage: input.swarmLineage }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
                 ...(initialMessage === undefined

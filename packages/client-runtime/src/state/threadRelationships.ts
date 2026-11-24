@@ -87,6 +87,7 @@ export function deriveThreadRelationshipGraph(input: {
       ? [...threads, { ...selectedThread, activityRunStatus: null, status: null }]
       : threads;
   for (const thread of lineageThreads) {
+    if (thread.lineage.swarmMember === true) continue;
     const parentThreadId =
       thread.forkedFrom?.type === "run"
         ? thread.forkedFrom.threadId

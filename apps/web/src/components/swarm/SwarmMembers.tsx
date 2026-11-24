@@ -13,6 +13,7 @@ import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Empty, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { MEMBER_STATE_TEXT, SwarmAvatar, SwarmStateDot, useMemberStateLabel } from "./SwarmAvatar";
+import { SwarmMemberModelControls } from "./SwarmMemberModelControls";
 import {
   groupMembers,
   memberBee,
@@ -28,10 +29,22 @@ function MemberRow(props: {
   cue: BeeCue | undefined;
   snippet: string;
   current: boolean;
+  threadRef: ScopedThreadRef;
   onOpen: (member: AgySwarmMember, intent: "primary" | "alternate") => void;
 }) {
   const stateLabel = useMemberStateLabel();
   const { member } = props;
+  const live = member.state !== "killed";
+  const model = live ? null : member.model;
+  const controls = live ? (
+    <div className="ps-12 pe-2 pb-1">
+      <SwarmMemberModelControls
+        threadRef={props.threadRef}
+        memberName={member.name}
+        fallbackModel={member.model}
+      />
+    </div>
+  ) : null;
   const content = (
     <>
       <SwarmAvatar bee={props.bee} cue={props.cue} working={member.state === "working"} />
@@ -58,13 +71,15 @@ function MemberRow(props: {
             </span>
           )}
         </span>
-        <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground">
-          {member.model ? (
-            <span className="max-w-[45%] shrink-0 truncate font-mono">{member.model}</span>
-          ) : null}
-          {member.model && props.snippet ? <span aria-hidden>·</span> : null}
-          {props.snippet ? <span className="min-w-0 truncate">{props.snippet}</span> : null}
-        </span>
+        {model || props.snippet ? (
+          <span className="flex min-w-0 items-baseline gap-1.5 text-xs text-muted-foreground">
+            {model ? (
+              <span className="max-w-[45%] shrink-0 truncate font-mono">{model}</span>
+            ) : null}
+            {model && props.snippet ? <span aria-hidden>·</span> : null}
+            {props.snippet ? <span className="min-w-0 truncate">{props.snippet}</span> : null}
+          </span>
+        ) : null}
       </span>
     </>
   );
@@ -76,6 +91,7 @@ function MemberRow(props: {
     return (
       <li className="px-2" aria-current="true">
         <div className={rowClass}>{content}</div>
+        {controls}
       </li>
     );
   }
@@ -96,6 +112,7 @@ function MemberRow(props: {
       >
         {content}
       </button>
+      {controls}
     </li>
   );
 }
@@ -139,6 +156,7 @@ export function SwarmMembers(props: { swarm: AgySwarmSnapshot; threadRef: Scoped
       cue={memberCue(member, props.swarm.posts, opened)}
       snippet={memberSnippet(member, props.swarm.posts)}
       current={member.threadId === props.threadRef.threadId}
+      threadRef={scopeThreadRef(props.threadRef.environmentId, member.threadId)}
       onOpen={openMember}
     />
   );

@@ -155,6 +155,21 @@ describe("swarm board logic", () => {
         }),
       ]),
     ).toBe("ready for review");
+    expect(
+      memberSnippet(member("a", { state: "waiting", lastPostSeq: 2 }), [
+        post(2, { from: "a", text: "[done] pow(a, b) returns `a ** b`, so 2 ** 3 is 8" }),
+      ]),
+    ).toBe("[done] pow(a, b) returns a ** b, so 2 ** 3 is 8");
+    expect(
+      memberSnippet(member("a", { state: "waiting", lastPostSeq: 3 }), [
+        post(3, {
+          from: "a",
+          text: "checked `**kwargs` and `**opts` in apps/server/**/*.ts and apps/web/**/*.ts (2**3, 4**5, **`ok`**)",
+        }),
+      ]),
+    ).toBe(
+      "checked **kwargs and **opts in apps/server/**/*.ts and apps/web/**/*.ts (2**3, 4**5, ok)",
+    );
   });
 
   it("counts mentions per direction and leaves @all to its toggle", () => {

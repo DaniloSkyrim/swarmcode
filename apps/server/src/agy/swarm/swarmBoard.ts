@@ -187,6 +187,24 @@ export function wakeTargets(swarm: StoredSwarm, post: StoredPost): StoredMember[
   );
 }
 
+/**
+ * The posts a member should be rung for: those that named it after its last read, up to its last
+ * wake, unless it was already rung for them (`rungSeq`). Empty when there is nothing new.
+ */
+export function unreadWakePosts(
+  swarm: StoredSwarm,
+  member: StoredMember,
+  rungSeq: number,
+): StoredPost[] {
+  if (!isLive(member) || member.lastWakeSeq <= Math.max(member.lastReadSeq, rungSeq)) return [];
+  return swarm.posts.filter(
+    (post) =>
+      post.seq > member.lastReadSeq &&
+      post.seq <= member.lastWakeSeq &&
+      wakeTargets({ ...swarm, members: [member] }, post).length > 0,
+  );
+}
+
 export function appendPost(
   swarm: StoredSwarm,
   input: {
@@ -225,6 +243,8 @@ export function appendPost(
   ) {
     swarm.doneAt = input.now;
   }
+  // A new member's brief means new work on a finished board, as with a second /swarm.
+  if (post.kind === "brief") swarm.doneAt = null;
   return post;
 }
 

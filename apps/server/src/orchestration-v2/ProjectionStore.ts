@@ -1337,6 +1337,7 @@ const shellIndexLineage = (row: {
   readonly parent_thread_id: string | null;
   readonly root_thread_id: string;
   readonly side_chat: number | null;
+  readonly swarm_member?: number | null;
 }): OrchestrationV2ThreadShell["lineage"] => ({
   parentThreadId: row.parent_thread_id === null ? null : ThreadId.make(row.parent_thread_id),
   relationshipToParent:
@@ -1345,6 +1346,7 @@ const shellIndexLineage = (row: {
       : null,
   rootThreadId: ThreadId.make(row.root_thread_id),
   ...(row.side_chat === null ? {} : { sideChat: row.side_chat === 1 }),
+  ...(row.swarm_member === 1 ? { swarmMember: true } : {}),
 });
 
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -8601,7 +8603,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE ${includeDeleted ? sql`1 = 1` : sql`t.deleted_at IS NULL`}${
               listedOnly
                 ? sql` AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
-                    AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1`
+                    AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+                    AND json_extract(t.payload_json, '$.lineage.swarmMember') IS NOT 1`
                 : sql``
             }${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`
@@ -9555,6 +9558,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
+        readonly swarm_member: number | null;
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
@@ -9570,6 +9574,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
           ${indexedField("$.lineage.sideChat")} AS side_chat,
+          ${indexedField("$.lineage.swarmMember")} AS swarm_member,
           ${indexedField("$.settledOverride")} AS settled_override,
           ${indexedField("$.settledAt")} AS settled_at,
           ${indexedField("$.pinnedAt")} AS pinned_at,
@@ -9657,6 +9662,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly root_thread_id: string;
         readonly side_chat: number | null;
         readonly workflow_step: number | null;
+        readonly swarm_member: number | null;
         readonly delegated_from_environment_id: string | null;
         readonly delegated_from_thread_id: string | null;
         readonly delegated_from_title: string | null;
@@ -9674,6 +9680,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
           json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
           json_extract(t.payload_json, '$.lineage.workflowStep') AS workflow_step,
+          json_extract(t.payload_json, '$.lineage.swarmMember') AS swarm_member,
           json_extract(t.payload_json, '$.delegatedFrom.environmentId') AS delegated_from_environment_id,
           json_extract(t.payload_json, '$.delegatedFrom.threadId') AS delegated_from_thread_id,
           json_extract(t.payload_json, '$.delegatedFrom.title') AS delegated_from_title,
@@ -9691,6 +9698,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         lineage: {
           ...shellIndexLineage(row),
           ...(row.workflow_step === 1 ? { workflowStep: true } : {}),
+          ...(row.swarm_member === 1 ? { swarmMember: true } : {}),
         },
         ...(row.delegated_from_environment_id === null || row.delegated_from_thread_id === null
           ? {}
@@ -9765,6 +9773,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND t.archived_at IS NULL
           AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
           AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+          AND json_extract(t.payload_json, '$.lineage.swarmMember') IS NOT 1
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`

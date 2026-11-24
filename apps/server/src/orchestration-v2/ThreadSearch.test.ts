@@ -73,6 +73,7 @@ const thread = (
     readonly deletedAt?: DateTime.Utc;
     readonly subagentOf?: ThreadId;
     readonly sideChatOf?: ThreadId;
+    readonly swarmMemberOf?: ThreadId;
     readonly title?: string;
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
@@ -112,7 +113,14 @@ const thread = (
             rootThreadId: overrides.sideChatOf,
             sideChat: true,
           }
-        : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        : overrides.swarmMemberOf
+          ? {
+              parentThreadId: overrides.swarmMemberOf,
+              relationshipToParent: null,
+              rootThreadId: overrides.swarmMemberOf,
+              swarmMember: true,
+            }
+          : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     forkedFrom: null,
     createdAt: at(0),
     updatedAt: at(0),
@@ -502,6 +510,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       const parent = ThreadId.make("thread:tokens-parent");
       const subagent = ThreadId.make("thread:tokens-subagent");
       const sideChat = ThreadId.make("thread:tokens-side-chat");
+      const swarmMember = ThreadId.make("thread:tokens-swarm-member");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -517,6 +526,11 @@ it.layer(layerTest)("ThreadSearch", (it) => {
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
           message(sideChat, "side-chat", "user", "Why rename ThreadSearchService?"),
+          thread(swarmMember, project, {
+            swarmMemberOf: parent,
+            title: "ThreadSearchService worker",
+          }),
+          message(swarmMember, "swarm-worker", "assistant", "ThreadSearchService worker hit"),
         ],
         projections.apply,
         { discard: true },
@@ -527,6 +541,8 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         result.matches.map((match) => [match.threadId, match.snippet]),
         [[parent, "Rename ThreadSearchService before shipping"]],
       );
+      const titleResult = yield* search.searchThreads({ query: "ThreadSearchService" });
+      assert.isFalse(titleResult.matches.some((match) => match.threadId === swarmMember));
       // A snippet cut inside a webhook URL shows its token as withheld, and the token is not searchable.
       assert.deepEqual(
         (yield* search.search({ query: "7f3a9c1e" })).matches.map((match) => match.snippet),

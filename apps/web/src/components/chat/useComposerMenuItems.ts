@@ -56,6 +56,7 @@ import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
+import { agyKeepsProviderCommand } from "@t3tools/client-runtime/agyComposerCommands";
 import { agySlashCommandItems } from "../../agy/agyMenuItems";
 
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
@@ -326,6 +327,7 @@ export function useComposerMenuItems({
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
+          agyKeepsProviderCommand(item.command) &&
           (item.command.name !== "compact" || compactSlashCommandAvailable) &&
           (item.command.name !== "clear" || !freshSessionAvailable),
       );

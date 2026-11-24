@@ -1,10 +1,12 @@
 // Fork: composer-side handling of the Antigravity slash commands, shared by web and mobile.
 // Native-first: a command the provider or upstream T3 already offers under the same name wins,
-// so the fork's entry is hidden and its text reaches the provider untouched.
+// so the fork's entry is hidden and its text reaches the provider untouched. The board commands
+// are the exception: the fork's run on every provider and the provider's are hidden.
 import {
   AGY_COMMANDS,
   AGY_PROMPT_COMMANDS,
   AGY_UI_COMMANDS,
+  isAgyBoardCommandName,
   parseAgyPromptCommands,
   type AgyCommandInfo,
   type ProviderInteractionMode,
@@ -57,8 +59,15 @@ export function agyNativeCommandNames(
 ): ReadonlySet<string> {
   return new Set([
     ...UPSTREAM_SLASH_COMMANDS,
-    ...providerCommands.map((command) => command.name.toLowerCase()),
+    ...providerCommands
+      .map((command) => command.name.toLowerCase())
+      .filter((name) => !isAgyBoardCommandName(name)),
   ]);
+}
+
+/** False for a provider command the fork replaces, so the menu shows one entry per name. */
+export function agyKeepsProviderCommand(command: { readonly name: string }): boolean {
+  return !isAgyBoardCommandName(command.name);
 }
 
 function isYielded(name: string, nativeNames: ReadonlySet<string>): boolean {

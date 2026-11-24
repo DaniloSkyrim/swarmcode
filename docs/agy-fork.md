@@ -5,13 +5,13 @@ Maintainer notes for the `agy` fork of T3 Code, published as **Swarmcode**, an u
 ## What the fork adds
 
 - Antigravity-style slash commands (`/plan`, `/boost`, `/swarm`, and more) that become prompt instructions on providers that lack them.
-- A swarm board: a shared board where agents in a thread talk, with MCP tools, a WebSocket subscription, and a right-panel tab.
+- A swarm board: a shared board where agents in a thread talk, with MCP tools, a WebSocket subscription, and a right-panel tab. Member threads carry `lineage.swarmMember` with the swarm's thread as parent, so thread lists leave them out and they open from the board. As in Antigravity, a post that names a member rings it once, and only while it is idle: a member mid-turn is rung when that turn ends, with what it has not read, so its thread never stacks queued wake messages.
 
 Each member's pixel-art bee flaps its wings while that member is working, as in Antigravity. That loop is a deliberate, owner-approved exception to the no-repainting-animation rule in `AGENTS.md`. It stays a 2-frame step at about 4 fps, only in the roster and graph, and stops when the member stops, when the panel unmounts, or under reduced motion. Do not add other loops.
 
 ## Native-first rule
 
-If upstream ships the same feature natively, upstream wins and the fork copy is deleted. A command the provider or upstream T3 already offers under the same name is already hidden by the fork. `node scripts/agy/check-hooks.ts` prints a warning when upstream code mentions one of the fork's command names (read from `AGY_PROMPT_COMMANDS` and `AGY_UI_COMMANDS` in `packages/contracts/src/agy.ts`). A warning is a prompt to look, not proof: `/goal` already appears in the Codex provider, and the fork handles it through `nativeGoals`.
+If upstream ships the same feature natively, upstream wins and the fork copy is deleted. A command the provider or upstream T3 already offers under the same name is already hidden by the fork. The board commands (`AGY_BOARD_COMMANDS`: `/swarm`, `/boost`, `/teamwork`) are the exception: a provider's own swarm runs where T3 cannot show it (Antigravity's runs in its app pane), so the fork's version runs on every provider, Antigravity included, and the provider's same-named command is hidden. `node scripts/agy/check-hooks.ts` prints a warning when upstream code mentions one of the fork's command names (read from `AGY_PROMPT_COMMANDS` and `AGY_UI_COMMANDS` in `packages/contracts/src/agy.ts`). A warning is a prompt to look, not proof: `/goal` already appears in the Codex provider, and the fork handles it through `nativeGoals`.
 
 ## Layout
 

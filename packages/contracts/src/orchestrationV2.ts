@@ -192,6 +192,8 @@ export const OrchestrationV2AppThreadLineage = Schema.Struct({
   sideChat: Schema.optional(Schema.Boolean),
   /** An agent step of a workflow run, which the thread's `workflowRun` names. */
   workflowStep: Schema.optional(Schema.Boolean),
+  /** Fork: a swarm member, shown in its swarm's thread rather than in thread lists. */
+  swarmMember: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
 
@@ -202,7 +204,8 @@ export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLin
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
   lineage.relationshipToParent !== "subagent" &&
   lineage.sideChat !== true &&
-  lineage.workflowStep !== true;
+  lineage.workflowStep !== true &&
+  lineage.swarmMember !== true;
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
@@ -3327,6 +3330,10 @@ export const OrchestrationV2Command = Schema.Union([
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
     /** Only the server sets this, for a thread that is a workflow run's agent step. */
     workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
+    /** Fork: only the server sets this, for a swarm member under the swarm's thread. */
+    swarmLineage: Schema.optional(
+      Schema.Struct({ parentThreadId: ThreadId, rootThreadId: ThreadId }),
+    ),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3764,6 +3771,8 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
+    /** Fork: only the server sets this, for a swarm member forked from another. */
+    swarmMember: Schema.optional(Schema.Boolean),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

@@ -234,7 +234,11 @@ export function memberSnippet(member: AgySwarmMember, posts: ReadonlyArray<AgySw
   if (last === undefined) return "";
   // One line of plain text: Markdown emphasis, code ticks and list markers would read as noise.
   return postBody(last)
-    .replace(/\*\*|`/gu, "")
+    .replace(
+      /`([^`]+)`|(?<![\w/\\*])\*\*(\S(?:.*?\S)?)\*\*(?![\w/\\*])/gu,
+      (_match, code: string | undefined, bold: string | undefined) =>
+        code ?? (bold ?? "").replace(/`([^`]+)`/gu, "$1"),
+    )
     .replace(/^\s*[-*]\s+/gmu, "")
     .replace(/\s+/gu, " ")
     .trim();

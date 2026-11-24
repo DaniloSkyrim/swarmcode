@@ -1,6 +1,10 @@
 // Fork: turns `/plan`, `/swarm` and the other Antigravity-style commands into instructions for
 // providers that lack them. The transcript keeps the user's text; only the provider sees this.
-import { type AgyPromptCommand, parseAgyPromptCommands } from "@t3tools/contracts";
+import {
+  AGY_BOARD_COMMANDS,
+  type AgyPromptCommand,
+  parseAgyPromptCommands,
+} from "@t3tools/contracts";
 
 import {
   BOOST_PROMPT,
@@ -15,7 +19,7 @@ import {
   TEAMWORK_PROMPT,
 } from "./agyPrompts.ts";
 
-/** Providers whose own CLI runs these commands; their text goes through untouched. */
+/** Providers whose own CLI runs these commands; their text goes through untouched, except the board commands. */
 const NATIVE_DRIVERS: ReadonlySet<string> = new Set(["antigravity"]);
 /** Single commands a provider's CLI runs itself, beyond what its session advertises. */
 const NATIVE_COMMANDS: Readonly<Record<string, ReadonlyArray<AgyPromptCommand>>> = {
@@ -42,14 +46,15 @@ export interface AgyExpansionSession {
 }
 
 export function expandAgyCommandText(text: string, session: AgyExpansionSession): string | null {
-  if (NATIVE_DRIVERS.has(session.driver)) return null;
-  const parsed = parseAgyPromptCommands(
-    text,
-    (command) =>
-      !(command === "goal" && session.nativeGoals) &&
-      !(NATIVE_COMMANDS[session.driver] ?? []).includes(command),
-  );
+  const parsed = parseAgyPromptCommands(text);
   if (parsed === null) return null;
+  const nativeDriver = NATIVE_DRIVERS.has(session.driver);
+  const nativeForDriver = NATIVE_COMMANDS[session.driver] ?? [];
+  const shouldExpand = (command: AgyPromptCommand) =>
+    (!nativeDriver || AGY_BOARD_COMMANDS.includes(command)) &&
+    !(command === "goal" && session.nativeGoals) &&
+    !nativeForDriver.includes(command);
+  if (!parsed.commands.some(shouldExpand)) return null;
   const blocks = [...new Set(parsed.commands.flatMap((command) => INSTRUCTIONS[command]))];
   const task = parsed.task === "" ? "(no task text)" : parsed.task;
   return `${blocks.join("\n\n")}\n\nThe user invoked ${parsed.commands.map((command) => `/${command}`).join(" ")}. Their request:\n<user_request>\n${task}\n</user_request>`;

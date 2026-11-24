@@ -68,10 +68,40 @@ it("channels scope wakes and reads, and @#main is refused", () => {
 
 it("the coordinator's unaddressed [done] ends the swarm, a mentioned one does not", () => {
   const swarm = swarmWith(["parser"]);
+  const midBrief = Board.appendPost(swarm, {
+    from: "parser",
+    text: "initial task",
+    kind: "brief",
+    now: at(0),
+  });
+  assert.isFalse("refused" in midBrief);
+  assert.isNull(swarm.doneAt);
   post(swarm, Board.COORDINATOR, "[done] @parser thanks");
   assert.isNull(swarm.doneAt);
   post(swarm, Board.COORDINATOR, "[done] parser shipped");
   assert.strictEqual(swarm.doneAt, at(1));
+
+  // Non-brief posts after [done] leave the finished board closed.
+  const killNotice = Board.appendPost(swarm, {
+    from: Board.COORDINATOR,
+    text: "killed parser",
+    kind: "system",
+    now: at(2),
+  });
+  assert.isFalse("refused" in killNotice);
+  assert.strictEqual(swarm.doneAt, at(1));
+
+  const reopen = Board.appendPost(swarm, {
+    from: "parser",
+    text: "next task",
+    kind: "brief",
+    now: at(3),
+  });
+  assert.isFalse("refused" in reopen);
+  assert.isNull(swarm.doneAt);
+
+  post(swarm, Board.COORDINATOR, "[done] next task shipped", 4);
+  assert.strictEqual(swarm.doneAt, at(4));
 });
 
 it("names are validated, reserved, and never reused after a kill", () => {
@@ -156,4 +186,21 @@ it("graph edges count mentions per pair", () => {
     2,
   );
   assert.strictEqual(edges.filter((edge) => edge.from === "parser").length, 2);
+});
+
+it("a member is rung once for the posts that named it, not again until the board moves", () => {
+  const swarm = swarmWith(["parser"]);
+  const coordinator = Board.memberByName(swarm, Board.COORDINATOR)!;
+  for (const text of ["@coordinator one", "@coordinator two", "for nobody"]) {
+    const created = post(swarm, "parser", text);
+    for (const target of Board.wakeTargets(swarm, created)) target.lastWakeSeq = created.seq;
+  }
+  const unread = Board.unreadWakePosts(swarm, coordinator, 0);
+  assert.deepEqual(
+    unread.map((item) => item.text),
+    ["@coordinator one", "@coordinator two"],
+  );
+  assert.deepEqual(Board.unreadWakePosts(swarm, coordinator, coordinator.lastWakeSeq), []);
+  coordinator.lastReadSeq = Board.head(swarm);
+  assert.deepEqual(Board.unreadWakePosts(swarm, coordinator, 0), []);
 });

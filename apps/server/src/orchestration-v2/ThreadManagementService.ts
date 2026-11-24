@@ -97,12 +97,16 @@ export function withCreationProvenance(
         delegatedFrom: _delegatedFrom,
         initialMessage: _initialMessage,
         workflowRun: _workflowRun,
+        swarmLineage: _swarmLineage,
         ...rest
       } = command;
       return { ...rest, ...provenance };
     }
+    case "thread.fork": {
+      const { swarmMember: _swarmMember, ...rest } = command;
+      return { ...rest, ...provenance };
+    }
     case "message.dispatch":
-    case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
       return { ...command, ...provenance };

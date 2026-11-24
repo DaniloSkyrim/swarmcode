@@ -122,7 +122,8 @@ export const AgyWsSwarmSubscribeRpc = Rpc.make(AGY_WS_METHODS.swarmSubscribe, {
 });
 
 // Slash commands the fork adds. A command a provider or upstream T3 already offers under the
-// same name wins: the menu hides the fork's entry and the server leaves the text alone.
+// same name wins: the menu hides the fork's entry and the server leaves the text alone. The board
+// commands are the exception (see AGY_BOARD_COMMANDS).
 export const AGY_PROMPT_COMMANDS = [
   "plan",
   "grill-me",
@@ -136,6 +137,18 @@ export const AGY_PROMPT_COMMANDS = [
   "run-workflow",
 ] as const;
 export type AgyPromptCommand = (typeof AGY_PROMPT_COMMANDS)[number];
+
+/**
+ * Commands that run on the swarm board. A provider's own swarm runs where T3 cannot show it (in
+ * Antigravity's app pane, say), so the fork's version runs on every provider and a provider
+ * command with the same name is hidden.
+ */
+export const AGY_BOARD_COMMANDS: ReadonlyArray<AgyPromptCommand> = ["swarm", "boost", "teamwork"];
+
+export const isAgyBoardCommandName = (name: string): boolean => {
+  const first = name.trim().toLowerCase().split(/\s+/u)[0] ?? "";
+  return AGY_BOARD_COMMANDS.some((command) => command === first);
+};
 
 export const AGY_UI_COMMANDS = [
   "swarm board",

@@ -81,6 +81,11 @@ it("stamps authoritative provenance on commands that create threads or messages"
       workflow: "fix",
       step: "write",
     },
+    // Fork: nor a swarm it is a member of.
+    swarmLineage: {
+      parentThreadId: ThreadId.make("thread:elsewhere"),
+      rootThreadId: ThreadId.make("thread:elsewhere"),
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -95,6 +100,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   expect(stamped).not.toHaveProperty("delegatedFrom");
   expect(stamped).not.toHaveProperty("initialMessage");
   expect(stamped).not.toHaveProperty("workflowRun");
+  expect(stamped).not.toHaveProperty("swarmLineage");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

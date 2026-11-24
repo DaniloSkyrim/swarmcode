@@ -300,6 +300,43 @@ describe("thread relationships", () => {
       } as never),
     ).toBeNull();
   });
+
+  it("omits swarm members from lineage fork relationships", () => {
+    const coordinator = ThreadId.make("thread-coordinator");
+    const worker = ThreadId.make("thread-worker");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: coordinator,
+          title: "Coordinator",
+          status: "running",
+          archivedAt: null,
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: coordinator,
+            parentThreadId: null,
+            relationshipToParent: null,
+          },
+        },
+        {
+          id: worker,
+          title: "Swarm worker",
+          status: "running",
+          archivedAt: null,
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: coordinator,
+            parentThreadId: coordinator,
+            relationshipToParent: null,
+            swarmMember: true,
+          },
+        },
+      ] as never,
+      projection: null,
+    });
+    expect(graph.edges).toEqual([]);
+    expect(immediateThreadRelationships(graph, coordinator)).toEqual([]);
+  });
 });
 
 const current = ThreadId.make("thread-current");

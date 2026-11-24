@@ -141,8 +141,9 @@ export const TEAMWORK_PROMPT = `<teamwork>
 Run this as a Teamwork project: a long-horizon, multi-milestone effort with review gates.
 
 Phase 1, scoping interview (now, before anything runs). Specify what, not how. Ask the
-user one question at a time, each with your recommended answer first, using your question
-tool if you have one (otherwise ask in plain text and end your turn). Settle:
+user one question at a time, each with your recommended answer first, through your question
+tool (AskUserQuestion, request_user_input, or similar) whenever you have one, so the user
+answers in a card (only without one, ask in plain text and end your turn). Settle:
 scope and purpose (demo, production, eval, exploration) and audience; the requirements
 they actually care about; an objective check for each requirement (a test suite, a
 benchmark or metric script, or an independent agent judging against an explicit rubric);
@@ -173,8 +174,9 @@ Plan before you build. Do not modify any file, run anything with side effects, o
 the implementation in this turn.
 1. Explore: read the relevant code, configuration, call sites and tests.
 2. Clarify: if requirements are ambiguous or several approaches are viable, ask focused
-   questions, one at a time, each with a recommended answer (use your question tool if you
-   have one). Ask nothing the code can answer.
+   questions, one at a time, each with a recommended answer, through your question tool
+   (AskUserQuestion, request_user_input, or similar) whenever you have one. Ask nothing the
+   code can answer.
 3. Write an Implementation Plan: goal, assumptions, proposed changes grouped by component
    with the files to touch, risks, and verification steps (tests, commands, manual checks).
    Present it as your plan (your proposed-plan output if your harness has one).
@@ -189,8 +191,9 @@ Before doing any work, interview the user about this task until you share the sa
 understanding of it.
 - Explore the codebase first; never ask what the code can answer.
 - Ask exactly one question at a time. Offer a few answers with your recommendation first,
-  marked "(Recommended)", and allow a written answer. Use your question tool if you have
-  one; otherwise ask in plain text and end your turn.
+  marked "(Recommended)", and allow a written answer. Ask through your question tool
+  (AskUserQuestion, request_user_input, or similar) whenever you have one, so the user
+  answers in a card; only without one, ask in plain text and end your turn.
 - Let each answer shape the next question; walk each branch of the design and resolve
   dependencies between decisions one by one.
 - When no open questions remain, summarize the decisions, then continue with the task
