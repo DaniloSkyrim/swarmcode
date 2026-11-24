@@ -39,15 +39,9 @@ const BEE_MARK = `import type { SVGProps } from "react";
 
 export function T3Wordmark(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg {...props} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <g stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-        <ellipse cx="6.6" cy="9.2" rx="3.6" ry="2.5" transform="rotate(-30 6.6 9.2)" />
-        <ellipse cx="17.4" cy="9.2" rx="3.6" ry="2.5" transform="rotate(30 17.4 9.2)" />
-        <ellipse cx="12" cy="14.6" rx="4" ry="5.6" />
-        <path d="M8.2 13h7.6M8.4 16.4h7.2M10.6 4.6 9.4 2.4M13.4 4.6l1.2-2.2" />
-      </g>
-      <circle cx="12" cy="6.6" r="2.3" fill="currentColor" />
-      <path d="M11 20.3h2L12 22.2z" fill="currentColor" />
+    <svg {...props} viewBox="0 0 16 16" fill="currentColor" shapeRendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+      <path opacity="0.45" d="M9 3h3v1h-3zM8 4h4v1h-4zM8 5h7v1h-7zM8 6h7v1h-7zM8 7h7v1h-7zM13 8h2v1h-2z" />
+      <path d="M2 4h1v1h-1zM6 4h1v1h-1zM2 5h1v1h-1zM6 5h1v1h-1zM3 6h1v1h-1zM5 6h1v1h-1zM3 7h3v1h-3zM2 8h6v1h-6zM9 8h2v1h-2zM12 8h1v1h-1zM1 9h7v1h-7zM9 9h2v1h-2zM12 9h2v1h-2zM1 10h1v1h-1zM3 10h5v1h-5zM9 10h2v1h-2zM12 10h2v1h-2zM1 11h7v1h-7zM9 11h2v1h-2zM12 11h4v1h-4zM2 12h6v1h-6zM9 12h2v1h-2zM12 12h2v1h-2zM3 13h5v1h-5zM9 13h2v1h-2zM12 13h1v1h-1z" />
     </svg>
   );
 }
