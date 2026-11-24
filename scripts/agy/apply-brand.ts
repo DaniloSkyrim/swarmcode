@@ -158,6 +158,40 @@ const edits = (
       ],
     ],
   },
+  // Releases here are nightly only, and desktop-settings.json is shared with T3 Code. Pin
+  // the channel in DesktopUpdates without touching DesktopAppSettings so saving window
+  // bounds or other settings here never overwrites the official app's saved channel.
+  {
+    file: "apps/desktop/src/updates/DesktopUpdates.ts",
+    replace: [
+      [
+        `      const settings = yield* desktopSettings.get;`,
+        `      const settings = { ...(yield* desktopSettings.get), updateChannel: "nightly" as const };`,
+      ],
+      [
+        `      if (Option.isSome(channelBlockedReason(nextChannel))) {
+        return yield* new DesktopUpdateChannelManagedError({
+          channel: nextChannel,
+          policyMessage: policy.message ?? "Your administrator manages T3 Code updates.",`,
+        `      if (nextChannel !== "nightly" || Option.isSome(channelBlockedReason(nextChannel))) {
+        return yield* new DesktopUpdateChannelManagedError({
+          channel: nextChannel,
+          policyMessage:
+            nextChannel !== "nightly"
+              ? "${NAME} publishes nightly builds only."
+              : (policy.message ?? "Your administrator manages ${NAME} updates."),`,
+      ],
+      [
+        `        yield* desktopSettings.setUpdateChannel(nextChannel).pipe(
+          Effect.onError(() => Ref.set(releaseFloorRef, previousFloor)),
+          Effect.mapError(
+            (cause) => new DesktopUpdateChannelPersistenceError({ channel: nextChannel, cause }),
+          ),
+        );`,
+        `        void previousFloor;`,
+      ],
+    ],
+  },
   {
     file: "apps/web/src/branding.ts",
     replace: [[`?.baseName ?? "T3 Code";`, `?.baseName ?? "${NAME}";`]],

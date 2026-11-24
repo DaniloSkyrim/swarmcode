@@ -11,6 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
   issues: write
 
@@ -42,6 +43,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Configure git and fetch upstream
+        id: upstream
         shell: bash
         run: |
           echo "LOG_DIR=$RUNNER_TEMP/agy-logs" >> "$GITHUB_ENV"
@@ -51,14 +53,21 @@ jobs:
           git remote add upstream "$UPSTREAM_URL"
           git fetch --no-tags upstream main
           echo "Upstream main: $(git rev-parse upstream/main)"
+          if git merge-base --is-ancestor upstream/main HEAD && \
+            [[ "$(git rev-parse --verify -q origin/main || true)" == "$(git rev-parse upstream/main)" ]]; then
+            echo "agy already has upstream main; nothing to sync."
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # `main` only ever mirrors upstream, so a non-fast-forward push fails the run.
       - name: Fast-forward main to upstream
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
           git push origin refs/remotes/upstream/main:refs/heads/main 2>&1 | tee "$LOG_DIR/01-main.log"
 
       - name: Merge upstream into agy
+        if: steps.upstream.outputs.up_to_date != 'true'
         id: merge
         shell: bash
         run: |
@@ -93,25 +102,27 @@ jobs:
       # A clean merge keeps a frozen lockfile. A lockfile taken from upstream is
       # refreshed so fork-only dependency changes, if any, are not lost.
       - name: Setup dependencies
-        if: steps.merge.outputs.lock_resolved != 'true'
+        if: steps.upstream.outputs.up_to_date != 'true' && steps.merge.outputs.lock_resolved != 'true'
         uses: ./.github/actions/setup-ci-deps
 
       - name: Setup Vite+ without installing
-        if: steps.merge.outputs.lock_resolved == 'true'
+        if: steps.upstream.outputs.up_to_date != 'true' && steps.merge.outputs.lock_resolved == 'true'
         uses: ./.github/actions/setup-ci-deps
         with:
           install: "false"
 
       - name: Refresh the lockfile
-        if: steps.merge.outputs.lock_resolved == 'true'
+        if: steps.upstream.outputs.up_to_date != 'true' && steps.merge.outputs.lock_resolved == 'true'
         shell: bash
         run: vp install --no-frozen-lockfile 2>&1 | tee "$LOG_DIR/03-lockfile.log"
 
       - name: Regenerate i18n catalogs
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: vp run -r i18n:generate 2>&1 | tee "$LOG_DIR/04-i18n.log"
 
       - name: Commit regenerated files
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
           git add -A pnpm-lock.yaml apps/web/src/i18n/translations apps/mobile/src/i18n/translations
@@ -122,23 +133,27 @@ jobs:
           fi
 
       - name: Check fork hooks
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: node scripts/agy/check-hooks.ts 2>&1 | tee "$LOG_DIR/05-hooks.log"
 
       - name: Check Swarmcode rebrand targets
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
-        run: node scripts/agy/apply-brand.ts --check 2>&1 | tee "$LOG_DIR/05-brand.log"
+        run: node scripts/agy/apply-brand.ts --check 2>&1 | tee "$LOG_DIR/06-brand.log"
 
       - name: Typecheck touched packages
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
           filters=(--filter @t3tools/contracts --filter @t3tools/client-runtime --filter t3 --filter @t3tools/web)
           if [[ -n "$(find apps/mobile/src -iname '*agy*' -o -iname '*swarm*' 2>/dev/null | head -n 1)" ]]; then
             filters+=(--filter @t3tools/mobile)
           fi
-          vp run --parallel --concurrency-limit 2 "${filters[@]}" typecheck 2>&1 | tee "$LOG_DIR/06-typecheck.log"
+          vp run --parallel --concurrency-limit 2 "${filters[@]}" typecheck 2>&1 | tee "$LOG_DIR/07-typecheck.log"
 
       - name: Run fork tests
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
           mapfile -t tests < <(
@@ -150,9 +165,10 @@ jobs:
           echo "Fork tests: ${#tests[@]}"
           printf '  %s\n' "${tests[@]}"
           if (( ${#tests[@]} == 0 )); then exit 0; fi
-          vp test run --passWithNoTests "${tests[@]}" 2>&1 | tee "$LOG_DIR/07-tests.log"
+          vp test run --passWithNoTests "${tests[@]}" 2>&1 | tee "$LOG_DIR/08-tests.log"
 
       - name: Push agy
+        if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
           if [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/agy)" ]]; then

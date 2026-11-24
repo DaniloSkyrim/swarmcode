@@ -23,11 +23,12 @@ Hook lines in upstream files are kept to one to a few lines each, so merges stay
 
 `.github/workflows/agy-sync.yml` runs every 6 hours and on demand:
 
-1. Fast-forwards `main` to `upstream/main` and pushes it.
-2. Merges `upstream/main` into `agy`. Conflicts in `pnpm-lock.yaml` and the web and mobile i18n catalogs take upstream's side; any other conflict fails the run.
-3. Reinstalls (refreshing the lockfile if it was taken from upstream), runs `vp run -r i18n:generate`, and commits what changed.
-4. Runs the hook check, typechecks contracts, client-runtime, server, web (and mobile when it has fork files), and runs the fork's tests.
-5. Pushes `agy` only if every step passed.
+1. Stops right there, successfully, when `agy` already contains `upstream/main` and `main` already matches it.
+2. Fast-forwards `main` to `upstream/main` and pushes it.
+3. Merges `upstream/main` into `agy`. Conflicts in `pnpm-lock.yaml` and the web and mobile i18n catalogs take upstream's side; any other conflict fails the run.
+4. Reinstalls (refreshing the lockfile if it was taken from upstream), runs `vp run -r i18n:generate`, and commits what changed.
+5. Runs the hook check, typechecks contracts, client-runtime, server, web (and mobile when it has fork files), and runs the fork's tests.
+6. Pushes `agy` only if every step passed.
 
 On failure it opens an issue labeled `agy-sync` (or comments on the open one) with the failing step and a log excerpt, and closes it on the next success.
 
@@ -60,6 +61,7 @@ The version is `<upstream base>-nightly.<YYYYMMDD>.<N>`, from `scripts/resolve-n
 
 - Product name `Swarmcode (Nightly)`, app id `io.github.daniloskyrim.swarmcode`, installer `Swarmcode-<version>-x64.exe`, and the startup-recovery releases link pointing at this repository.
 - The bee icons in `scripts/agy/brand/` over every file in `assets/nightly`, `assets/prod` and `apps/web/public`, a bee mark in place of the `T3Wordmark` artwork, and the sidebar and page titles.
+- The update channel is pinned to nightly in `DesktopUpdates.ts`, since the fork publishes nothing else and `desktop-settings.json` is shared with the official app, leaving the official app's saved channel untouched.
 - "T3 Code" becomes "Swarmcode" in web, desktop and client-runtime copy. Catalog keys hash the English text, so the script runs each app's `gt generate` and carries every existing translation over to its new key.
 
 `--check` only verifies that each spot still exists; the sync runs it, so an upstream change that moves one fails the sync instead of the next release. When it fails, update the strings in `apply-brand.ts`. Never commit the script's output.
@@ -76,6 +78,6 @@ Download the `.exe` from the latest prerelease and run it. After that the app fo
 
 - Default branch: `agy` (scheduled workflows run from the default branch, and the workflow files exist only on `agy`).
 - Settings, Actions, General, Workflow permissions: read and write, so `GITHUB_TOKEN` gets `contents: write` and `issues: write` (both workflows request them explicitly).
-- Optional secret `AGY_SYNC_TOKEN`: a personal access token with `repo` and `workflow` scopes. Needed only when upstream changes files under `.github/workflows`, because `GITHUB_TOKEN` cannot push those. Pushes made with the token also trigger other workflows.
+- Secret `AGY_SYNC_TOKEN`: a personal access token with `repo` and `workflow` scopes (fine-grained: Contents and Workflows, read and write). Needed whenever upstream changes files under `.github/workflows`, because `GITHUB_TOKEN` cannot push those. Pushes made with the token also trigger other workflows.
 - Disable the inherited upstream workflows (Actions tab, or Settings, Actions, General) apart from the two `Agy` ones. They target Blacksmith runners and upstream-only secrets and would only queue.
 - `main` must stay an untouched mirror, or the fast-forward step fails.
