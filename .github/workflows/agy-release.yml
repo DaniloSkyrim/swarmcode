@@ -125,7 +125,17 @@ jobs:
             --arch x64 \
             --build-version "${{ steps.release_meta.outputs.version }}" \
             --skip-build \
+            --keep-stage \
             --verbose
+
+      - name: List the packaged payload
+        if: failure()
+        shell: bash
+        run: |
+          for dir in "$(cygpath "$LOCALAPPDATA")"/Temp/t3code-desktop-win-stage-*/app/dist/win-unpacked; do
+            echo "$dir: $(find "$dir" -type f | wc -l) files"
+            (cd "$dir" && find . -type f | sort)
+          done
 
       - name: Check the update feed file
         shell: bash
