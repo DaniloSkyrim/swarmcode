@@ -1431,11 +1431,12 @@ it.effect.each(["stable", "upstream/release"])(
   (baseRef) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const git = yield* GitVcsDriver.GitVcsDriver;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-remote-base-" });
-      const cwd = `${directory}/repo`;
-      const remote = `${directory}/remote.git`;
-      const worktreePath = `${directory}/worktree`;
+      const cwd = path.join(directory, "repo");
+      const remote = path.join(directory, "remote.git");
+      const worktreePath = path.join(directory, "worktree");
       yield* fs.makeDirectory(cwd);
       const command = (at: string, args: string[]) =>
         git.execute({ operation: "launch-test", cwd: at, args });
@@ -3033,11 +3034,21 @@ it.live(
       ]) {
         yield* git.execute({ operation: "launch-test", cwd: shop, args });
       }
+      const layoutScript = path.join(tmp, "layout.mjs");
+      yield* fileSystem.writeFileString(
+        layoutScript,
+        [
+          'import { execFileSync } from "node:child_process";',
+          'import { appendFileSync } from "node:fs";',
+          `appendFileSync(${JSON.stringify(ran)}, "create\\n");`,
+          'execFileSync("git", ["worktree", "add", "-q", "-b", process.env.T3_WORKTREE_BRANCH, process.env.T3_WORKTREE_PROJECT_PATH], { stdio: "inherit" });',
+        ].join("\n"),
+      );
       yield* fileSystem.writeFileString(
         path.join(shop, "t3.json"),
         JSON.stringify({
           worktreeLayout: {
-            create: `echo create >> "${ran}" && git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"`,
+            create: "node ../layout.mjs",
           },
         }),
       );
