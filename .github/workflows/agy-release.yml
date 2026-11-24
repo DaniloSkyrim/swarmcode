@@ -56,6 +56,10 @@ jobs:
     needs: check
     if: needs.check.outputs.skip != 'true'
     runs-on: windows-latest
+    # setup-ci-deps puts a POSIX Vite+ path on PATH when its cache hits, which only bash resolves.
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 60
     env:
       # The app's updater follows this repository's releases, not upstream's.
