@@ -20,6 +20,21 @@ const VIEW_LABELS = {
 } as const;
 type SwarmView = keyof typeof VIEW_LABELS;
 
+const MAX_REMEMBERED_VIEWS = 200;
+
+// The panel unmounts while a member's thread tab is open, so closing that tab would reset it.
+const lastViewByThread = new Map<string, SwarmView>();
+
+function rememberView(viewKey: string, view: SwarmView) {
+  lastViewByThread.delete(viewKey);
+  if (view === "board") return;
+  lastViewByThread.set(viewKey, view);
+  if (lastViewByThread.size > MAX_REMEMBERED_VIEWS) {
+    const oldest = lastViewByThread.keys().next().value;
+    if (oldest !== undefined) lastViewByThread.delete(oldest);
+  }
+}
+
 function SwarmStatus(props: { done: boolean }) {
   if (props.done) {
     return (
@@ -41,7 +56,14 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
   const gt = useGT();
   const resolve = useMessages();
   const idBase = useId();
-  const [selectedView, setView] = useState<SwarmView>("board");
+  const viewKey = `${props.environmentId}:${props.threadRef.threadId}`;
+  const [viewState, setViewState] = useState<{ key: string; view: SwarmView } | null>(null);
+  const selectedView =
+    viewState?.key === viewKey ? viewState.view : (lastViewByThread.get(viewKey) ?? "board");
+  const setView = (next: SwarmView) => {
+    rememberView(viewKey, next);
+    setViewState({ key: viewKey, view: next });
+  };
   // Kept here so a search or filter survives a visit to another tab.
   const [filter, setFilter] = useState<PostFilter>(NO_POST_FILTER);
   const [follow, setFollow] = useState(true);
