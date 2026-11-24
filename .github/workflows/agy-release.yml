@@ -38,6 +38,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
@@ -137,6 +138,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.release_meta.outputs.tag }}
           VERSION: ${{ steps.release_meta.outputs.version }}
           AGY_SHA: ${{ needs.check.outputs.sha }}

@@ -109,7 +109,7 @@ jobs:
 
       - name: Regenerate i18n catalogs
         shell: bash
-        run: vp run i18n:generate 2>&1 | tee "$LOG_DIR/04-i18n.log"
+        run: vp run -r i18n:generate 2>&1 | tee "$LOG_DIR/04-i18n.log"
 
       - name: Commit regenerated files
         shell: bash
@@ -166,6 +166,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           for number in $(gh issue list --label agy-sync --state open --json number --jq '.[].number'); do
             gh issue close "$number" --comment "Sync recovered in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
@@ -176,6 +177,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
