@@ -81,9 +81,9 @@ export const layer = McpToolAccess.toLayer(SwarmToolkit, {
             }
             return {
               result: yield* swarm.setPlan(threadId, {
-                goal: yield* required(input.goal, "goal"),
-                tasks: (tasks ?? {}) as Record<string, string>,
-                threads: input.threads ?? [],
+                goal: input.goal,
+                tasks: tasks as Record<string, string> | undefined,
+                threads: input.threads,
               }),
             };
           }

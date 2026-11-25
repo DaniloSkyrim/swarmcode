@@ -71,6 +71,7 @@ import {
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
 import { expandAgyMessage } from "../agy/agyPromptExpansion.ts";
+import { isActiveSwarmCoordinator } from "../agy/swarm/AgySwarm.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -315,6 +316,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const serverConfig = yield* ServerConfig.ServerConfig;
     const projects = yield* ProjectService.ProjectService;
     const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
@@ -1089,6 +1091,10 @@ export const layer: Layer.Layer<
       const turnMessage = expandAgyMessage(providerMessage, {
         driver: session.driver,
         nativeGoals: goalDriver,
+        activeSwarmCoordinator: isActiveSwarmCoordinator(
+          serverConfig.stateDir,
+          projection.thread.id,
+        ),
       });
       const messageText = withMessageSenderNote(
         turnMessage,

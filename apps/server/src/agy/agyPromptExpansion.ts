@@ -16,6 +16,7 @@ import {
   RUN_WORKFLOW_PROMPT,
   SCHEDULE_PROMPT,
   SWARM_COORDINATOR_PROMPT,
+  SWARM_COORDINATOR_REMINDER,
   TEAMWORK_PROMPT,
 } from "./agyPrompts.ts";
 
@@ -43,11 +44,18 @@ export interface AgyExpansionSession {
   readonly driver: string;
   /** The provider runs `/goal` itself. */
   readonly nativeGoals: boolean;
+  /** The thread currently coordinates an active swarm with at least one live worker. */
+  readonly activeSwarmCoordinator?: boolean | undefined;
 }
 
 export function expandAgyCommandText(text: string, session: AgyExpansionSession): string | null {
   const parsed = parseAgyPromptCommands(text);
-  if (parsed === null) return null;
+  if (parsed === null) {
+    if (session.activeSwarmCoordinator !== true) return null;
+    const trimmed = text.trimStart();
+    if (trimmed.startsWith("/") || trimmed.startsWith("[swarm]")) return null;
+    return `${SWARM_COORDINATOR_REMINDER}\n\n${text}`;
+  }
   const nativeDriver = NATIVE_DRIVERS.has(session.driver);
   const nativeForDriver = NATIVE_COMMANDS[session.driver] ?? [];
   const shouldExpand = (command: AgyPromptCommand) =>

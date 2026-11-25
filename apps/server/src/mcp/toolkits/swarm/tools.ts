@@ -17,9 +17,11 @@ const dependencies = [
 const SwarmTool = Tool.make("swarm", {
   description:
     "Run a swarm: named worker threads that coordinate on a shared message board the user watches live. " +
+    "Always use this T3 Code MCP swarm tool (not a provider's native swarm tool). Keep coordinator turns short: delegate exploration and edits to workers. " +
     "Actions: status (members and states), models (models you can give workers), add (start workers: name, brief, " +
     'optional model, n + tasks for a numbered group, fork from a member\'s conversation, workspace:"worktree" for an own copy, channels), ' +
-    "kill (stop a worker for good), model (switch a member's model), title (name the swarm), plan (the overview: goal, tasks, threads), " +
+    "kill (stop a worker for good), model (switch a member's model), title (name the swarm), " +
+    "plan (set/update the overview; goal is required on the first call, omitted fields keep their current values, provided fields replace theirs), " +
     "channel (op create|join|leave|archive|list). The thread that first calls it becomes the coordinator.",
   parameters: Schema.Struct({
     action: Schema.Literals([
@@ -36,7 +38,8 @@ const SwarmTool = Tool.make("swarm", {
       description: "Worker name (add, kill, model), or the member to move (channel join/leave).",
     }),
     brief: Schema.optional(Schema.String).annotate({
-      description: "add: everything the worker needs, as its first message. It sees nothing else.",
+      description:
+        "add: concise first message for the worker (it has not seen this chat). State goal, owned files/scope, constraints, and done criteria; let the worker read files itself.",
     }),
     model: Schema.optional(Schema.String).annotate({
       description: 'add, model: "<instance>/<model>" or "<model>". Omit on add to use yours.',
@@ -48,7 +51,7 @@ const SwarmTool = Tool.make("swarm", {
       Schema.Union([Schema.Array(Schema.String), Schema.Record(Schema.String, Schema.String)]),
     ).annotate({
       description:
-        "add: one task per numbered worker, appended to the shared brief. plan: {<worker>: <piece in a few words>}.",
+        "add: one task per numbered worker, appended to the shared brief. plan: {<worker>: <piece in a few words>} (omit to keep current).",
     }),
     fork: Schema.optional(Schema.String).annotate({
       description: "add: start from this member's conversation instead of a blank one.",
@@ -57,8 +60,14 @@ const SwarmTool = Tool.make("swarm", {
     channels: Schema.optional(Schema.Array(Schema.String)),
     title: Schema.optional(Schema.String),
     kind: Schema.optional(AgySwarmKind),
-    goal: Schema.optional(AgySwarmPlan.fields.goal),
-    threads: Schema.optional(AgySwarmPlan.fields.threads),
+    goal: Schema.optional(AgySwarmPlan.fields.goal).annotate({
+      description:
+        "plan: {title, line} for the overview (required on first plan call; omit to keep current).",
+    }),
+    threads: Schema.optional(AgySwarmPlan.fields.threads).annotate({
+      description:
+        "plan: work groups [{id, title, goal, tasks:[worker...]}] (omit to keep current; pass [] to clear).",
+    }),
     op: Schema.optional(Schema.Literals(["create", "join", "leave", "archive", "list"])),
     channel: Schema.optional(Schema.String),
     topic: Schema.optional(Schema.String),

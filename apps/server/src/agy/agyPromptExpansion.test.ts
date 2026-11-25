@@ -55,3 +55,28 @@ it("other text and the swarm board UI command pass through", () => {
   assert.isNull(expandAgyCommandText("/swarm board", cursor));
   assert.isNull(expandAgyCommandText("/planner x", cursor));
 });
+
+it("active swarm coordinators receive a short reminder on plain messages, not on commands or wakes", () => {
+  const activeAntigravity = {
+    driver: "antigravity",
+    nativeGoals: true,
+    activeSwarmCoordinator: true,
+  };
+  const reminded = expandAgyCommandText("Add two workers for the tests", activeAntigravity);
+  assert.isNotNull(reminded);
+  assert.include(reminded!, "<swarm_coordinator_reminder>");
+  assert.include(reminded!, "Add two workers for the tests");
+
+  // Explicit /swarm expands the full coordinator prompt without duplicating the reminder.
+  const explicitSwarm = expandAgyCommandText("/swarm add two workers", activeAntigravity) ?? "";
+  assert.include(explicitSwarm, "<swarm_coordinator>");
+  assert.notInclude(explicitSwarm, "<swarm_coordinator_reminder>");
+
+  // Explicit slash commands and board wakeups are left untouched.
+  assert.isNull(expandAgyCommandText("/plan rethink architecture", activeAntigravity));
+  assert.isNull(expandAgyCommandText("/compact", activeAntigravity));
+  assert.isNull(expandAgyCommandText("/swarm board", activeAntigravity));
+  assert.isNull(
+    expandAgyCommandText("[swarm] New on the board for you, coordinator:", activeAntigravity),
+  );
+});
