@@ -73,6 +73,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
   | typeof AGY_WS_METHODS.swarmSubscribe
+  | typeof AGY_WS_METHODS.swarmActiveSubscribe
   | typeof WS_METHODS.workflowsSubscribe
   | typeof WS_METHODS.workflowsCounts
   | typeof WS_METHODS.serverGetStorageCleanupReport

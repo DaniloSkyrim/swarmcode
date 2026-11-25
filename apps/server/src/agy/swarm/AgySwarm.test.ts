@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  type AgyActiveSwarmsSnapshot,
   type AgySwarmSnapshot,
   EventId,
   type ModelSelection,
@@ -418,4 +419,76 @@ it.effect("kill saves the member's last live model and tolerates a missing threa
         assert.strictEqual(killedGhost?.instanceId, instanceId);
       }),
   ),
+);
+
+it.effect(
+  "activeSnapshot and activeChanges track live working workers and clear when idle or done",
+  () =>
+    withSwarmHarness(
+      ({ swarm, coordinatorId, workerId, setStatus, emitRunStatus, awaitDomainSubscription }) =>
+        Effect.gen(function* () {
+          const updates = yield* Queue.unbounded<AgyActiveSwarmsSnapshot>();
+          const subscribed = awaitDomainSubscription();
+          const watcher = yield* Effect.forkChild(
+            Stream.runForEach(swarm.activeChanges, (snap) =>
+              Queue.offer(updates, snap).pipe(Effect.asVoid),
+            ),
+          );
+
+          // Harness launches worker as running, so coordinator starts active with a stable startedAt.
+          const initial = yield* Queue.take(updates);
+          assert.lengthOf(initial.active, 1);
+          assert.strictEqual(initial.active[0]?.threadId, coordinatorId);
+          const initialStartedAt = initial.active[0]!.startedAt;
+          yield* subscribed;
+
+          // Adding a second worker keeps the coordinator's active startedAt monotonic.
+          yield* TestClock.adjust("5 seconds");
+          yield* swarm.add(coordinatorId, { name: "worker-2", brief: "second task" });
+          const snap2 = yield* swarm.snapshot(coordinatorId);
+          const worker2Id = snap2!.members.find((member) => member.name === "worker-2")!.threadId;
+          const whileBothWorking = yield* swarm.activeSnapshot;
+          assert.deepStrictEqual(whileBothWorking.active, [
+            { threadId: coordinatorId, startedAt: initialStartedAt },
+          ]);
+
+          // Stopping only one worker leaves the swarm active with the same startedAt.
+          setStatus(workerId, "completed");
+          yield* emitRunStatus(workerId, "completed");
+          yield* TestClock.adjust("300 millis");
+          const withOneWorking = yield* swarm.activeSnapshot;
+          assert.deepStrictEqual(withOneWorking.active, [
+            { threadId: coordinatorId, startedAt: initialStartedAt },
+          ]);
+
+          // Completing the last worker removes the coordinator and emits an update.
+          setStatus(worker2Id, "completed");
+          yield* emitRunStatus(worker2Id, "completed");
+          yield* TestClock.adjust("300 millis");
+          const idleUpdate = yield* Queue.take(updates);
+          assert.deepStrictEqual(idleUpdate.active, []);
+
+          // Coordinator working alone (no working non-coordinator workers) does not count as swarming.
+          setStatus(coordinatorId, "running");
+          yield* emitRunStatus(coordinatorId, "running");
+          yield* TestClock.adjust("300 millis");
+          assert.deepStrictEqual((yield* swarm.activeSnapshot).active, []);
+
+          // Resuming a worker re-activates the swarm and emits an update.
+          setStatus(workerId, "running");
+          yield* emitRunStatus(workerId, "running");
+          yield* TestClock.adjust("300 millis");
+          const resumedUpdate = yield* Queue.take(updates);
+          assert.lengthOf(resumedUpdate.active, 1);
+          assert.strictEqual(resumedUpdate.active[0]?.threadId, coordinatorId);
+
+          // Marking the swarm done removes it even if a worker shell still reports running.
+          yield* swarm.post(coordinatorId, { text: "[done] finished" });
+          yield* TestClock.adjust("300 millis");
+          const doneUpdate = yield* Queue.take(updates);
+          assert.deepStrictEqual(doneUpdate.active, []);
+
+          yield* Fiber.interrupt(watcher);
+        }),
+    ),
 );

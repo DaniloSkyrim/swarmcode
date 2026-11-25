@@ -2,6 +2,8 @@
 // wakeups live here and persist as JSON next to the state database, so upstream migrations
 // never see them.
 import {
+  type AgyActiveSwarm,
+  type AgyActiveSwarmsSnapshot,
   type AgySwarmKind,
   type AgySwarmMemberState,
   type AgySwarmPlan,
@@ -115,6 +117,8 @@ export interface AgySwarmShape {
   >;
   readonly snapshot: (threadId: ThreadId) => Effect.Effect<AgySwarmSnapshot | null>;
   readonly changes: (threadId: ThreadId) => Stream.Stream<AgySwarmSnapshot | null>;
+  readonly activeSnapshot: Effect.Effect<AgyActiveSwarmsSnapshot>;
+  readonly activeChanges: Stream.Stream<AgyActiveSwarmsSnapshot>;
 }
 
 export class AgySwarm extends Context.Service<AgySwarm, AgySwarmShape>()("t3/agy/swarm/AgySwarm") {}
@@ -989,6 +993,76 @@ const make = Effect.gen(function* () {
     ).pipe(Stream.changesWith((left, right) => fingerprint(left) === fingerprint(right)));
   };
 
+  // Monotonic start timestamp per active swarm so the elapsed timer stays steady across worker handoffs.
+  const activeSinceBySwarm = new Map<string, string>();
+
+  const activeSnapshot: AgySwarmShape["activeSnapshot"] = Effect.gen(function* () {
+    const active: Array<AgyActiveSwarm> = [];
+    const seen = new Set<string>();
+    const now = yield* nowIso;
+    for (const swarm of swarms.values()) {
+      if (swarm.doneAt !== null) {
+        activeSinceBySwarm.delete(swarm.id);
+        continue;
+      }
+      const states = yield* memberStates(swarm);
+      const workingWorkers = states.filter(
+        ({ member, state }) => member.role !== "coordinator" && state === "working",
+      );
+      if (workingWorkers.length === 0) {
+        activeSinceBySwarm.delete(swarm.id);
+        continue;
+      }
+      seen.add(swarm.id);
+      let startedAt = activeSinceBySwarm.get(swarm.id);
+      if (startedAt === undefined) {
+        const earliest = workingWorkers
+          .map(({ shell, member }) => {
+            const runAt =
+              shell?.activityRunStartedAt ??
+              shell?.latestRunStartedAt ??
+              shell?.latestRunRequestedAt ??
+              null;
+            return runAt !== null ? DateTime.formatIso(runAt) : member.createdAt;
+          })
+          .toSorted()[0];
+        startedAt = earliest ?? swarm.posts.at(-1)?.createdAt ?? now;
+        activeSinceBySwarm.set(swarm.id, startedAt);
+      }
+      active.push({
+        threadId: ThreadId.make(swarm.coordinatorThreadId),
+        startedAt,
+      });
+    }
+    for (const swarmId of activeSinceBySwarm.keys()) {
+      if (!seen.has(swarmId)) activeSinceBySwarm.delete(swarmId);
+    }
+    active.sort((left, right) => left.threadId.localeCompare(right.threadId));
+    return { active };
+  });
+
+  const activeFingerprint = (value: AgyActiveSwarmsSnapshot) =>
+    value.active.map((entry) => `${entry.threadId}:${entry.startedAt}`).join("\n");
+
+  const activeChanges: AgySwarmShape["activeChanges"] = Stream.concat(
+    Stream.fromEffect(activeSnapshot),
+    Stream.merge(
+      Stream.fromPubSub(changed),
+      threads.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            STATE_EVENT_PREFIXES.some((prefix) => event.type.startsWith(prefix)) &&
+            byThread.has(event.threadId),
+        ),
+        Stream.map((event) => byThread.get(event.threadId) ?? ""),
+        Stream.catchCause(() => Stream.empty),
+      ),
+    ).pipe(
+      Stream.debounce(Duration.millis(250)),
+      Stream.mapEffect(() => activeSnapshot),
+    ),
+  ).pipe(Stream.changesWith((left, right) => activeFingerprint(left) === activeFingerprint(right)));
+
   const monitorOnce = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     for (const swarm of swarms.values()) {
@@ -1074,6 +1148,8 @@ const make = Effect.gen(function* () {
     wait,
     snapshot,
     changes,
+    activeSnapshot,
+    activeChanges,
   } satisfies AgySwarmShape;
 });
 

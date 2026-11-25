@@ -2413,6 +2413,8 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsSubscribe]: (_input) => workflows.watch,
         [AGY_WS_METHODS.swarmSubscribe]: (input) =>
           agySwarm._tag === "Some" ? agySwarm.value.changes(input.threadId) : Stream.succeed(null),
+        [AGY_WS_METHODS.swarmActiveSubscribe]: (_input) =>
+          agySwarm._tag === "Some" ? agySwarm.value.activeChanges : Stream.succeed({ active: [] }),
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),

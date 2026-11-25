@@ -1,9 +1,11 @@
+import { hasActiveSwarm } from "@t3tools/client-runtime/state/agy-swarm";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { useActiveSwarmThreads } from "../../state/agySwarm";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
@@ -36,8 +38,9 @@ type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 function observeInbox(
   threads: Parameters<typeof threadListInboxReturns.observe>[0],
   _expiredGraceVersion: number,
+  activeSwarms: ReadonlyMap<string, string>,
 ) {
-  return threadListInboxReturns.observe(threads);
+  return threadListInboxReturns.observe(threads, (thread) => hasActiveSwarm(activeSwarms, thread));
 }
 
 /**
@@ -72,14 +75,17 @@ export function useThreadListV2(input: {
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
   );
+  const activeSwarms = useActiveSwarmThreads(
+    workingShelfEnabled ? threads.map((thread) => thread.environmentId) : [],
+  );
   // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
     threadListInboxReturns.subscribe,
     threadListInboxReturns.getSnapshot,
   );
   const inbox = useMemo(
-    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
-    [threads, workingShelfEnabled, inboxVersion],
+    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion, activeSwarms),
+    [threads, workingShelfEnabled, inboxVersion, activeSwarms],
   );
   // Compute move availability per section; per-row planning is quadratic.
   const moveAvailability = useMemo(() => {

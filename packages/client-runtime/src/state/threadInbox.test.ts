@@ -235,6 +235,36 @@ describe("createInboxReturnTracker", () => {
     expect(notify).not.toHaveBeenCalled();
     expect(tracker.returnedAt(thread("a", false))).toBeUndefined();
   });
+
+  it("treats idle threads with an active swarm as working, while keeping attention requests out", () => {
+    const idle = thread("a", false);
+    expect(isThreadWorking(idle, true)).toBe(true);
+    expect(isThreadWorking({ ...idle, hasPendingApprovals: true }, true)).toBe(false);
+    expect(isThreadWorking({ ...idle, hasPendingUserInput: true }, true)).toBe(false);
+    expect(isThreadWorking({ ...idle, pendingSubagentRequest: "approval" }, true)).toBe(false);
+
+    const tracker = createInboxReturnTracker();
+    const longAgoCompleted = {
+      ...idle,
+      latestRun: {
+        runId: RunId.make("old-coordinator-turn"),
+        status: "completed" as const,
+        requestedAt: "1969-12-31T23:50:00.000Z",
+        startedAt: "1969-12-31T23:50:00.000Z",
+        completedAt: "1969-12-31T23:51:00.000Z",
+        assistantMessageId: null,
+      },
+    };
+    tracker.observe([longAgoCompleted], () => true);
+    expect(tracker.isWorking(longAgoCompleted)).toBe(true);
+
+    // Even when the coordinator's own run ended long ago, dropping activeSwarm gets exit grace.
+    tracker.observe([longAgoCompleted], () => false);
+    expect(tracker.isWorking(longAgoCompleted)).toBe(true);
+    vi.advanceTimersByTime(2_000);
+    expect(tracker.isWorking(longAgoCompleted)).toBe(false);
+    expect(tracker.returnedAt(longAgoCompleted)).toBe(12_000);
+  });
 });
 
 describe("sortWorkingThreadsBySend", () => {

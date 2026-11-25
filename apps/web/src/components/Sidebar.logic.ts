@@ -922,6 +922,7 @@ export type SidebarThreadStatus =
   | "request"
   | "preparing"
   | "working"
+  | "swarming"
   | "waiting"
   | "failed"
   | "limited"
@@ -942,7 +943,12 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "preparing" || input.status === "working" || input.status === "waiting") {
+  if (
+    input.status === "preparing" ||
+    input.status === "working" ||
+    input.status === "swarming" ||
+    input.status === "waiting"
+  ) {
     return true;
   }
   if (input.status === "ready" || input.status === "approval") {
@@ -961,7 +967,10 @@ type SidebarThreadStatusInput = Pick<
   | "blockedOnThreadWait"
 >;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadStatus(
+  thread: SidebarThreadStatusInput,
+  options?: { readonly activeSwarm?: boolean },
+): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
   }
@@ -971,6 +980,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   // A guest is waiting on the owner; the agent's own requests come first.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
+  }
+  if (options?.activeSwarm === true) {
+    return "swarming";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
@@ -996,8 +1008,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 /** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
 export function resolveSidebarRowStatus(
   thread: ThreadStatusInput & SidebarThreadStatusInput,
+  options?: { readonly activeSwarm?: boolean },
 ): SidebarThreadStatus {
-  const status = resolveSidebarThreadStatus(thread);
+  const status = resolveSidebarThreadStatus(thread, options);
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";
@@ -1007,15 +1020,17 @@ export function resolveSidebarRowStatus(
 export function resolveWindowTitleThreadStatus(
   thread: SidebarThreadStatusInput,
   resolve: MessageResolver = m,
+  options?: { readonly activeSwarm?: boolean },
 ): string | null {
   // A guest waiting doesn't hide that the agent is still working.
-  switch (resolveSidebarThreadStatus({ ...thread, pendingGuestMessageCount: 0 })) {
+  switch (resolveSidebarThreadStatus({ ...thread, pendingGuestMessageCount: 0 }, options)) {
     case "approval":
       return resolve(THREAD_STATUS_TEXT.approval);
     case "input":
       return resolve(THREAD_STATUS_TEXT.input);
     case "preparing":
     case "working":
+    case "swarming":
       return resolve(THREAD_STATUS_TEXT.working);
     case "waiting":
       // Waiting on a child thread is still this turn, so it must not read as finished.
@@ -1029,10 +1044,13 @@ export function resolveWindowTitleThreadStatus(
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
  */
-export function resolveSidebarFolderDot(
-  threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
+export function resolveSidebarFolderDot<T extends ThreadStatusInput & SidebarThreadStatusInput>(
+  threads: ReadonlyArray<T>,
+  options?: { readonly isSwarmActive?: (thread: T) => boolean },
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map(resolveSidebarRowStatus));
+  const statusOf = (thread: T) =>
+    resolveSidebarRowStatus(thread, { activeSwarm: options?.isSwarmActive?.(thread) === true });
+  const statuses = new Set(threads.map(statusOf));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||
@@ -1044,10 +1062,12 @@ export function resolveSidebarFolderDot(
   if (statuses.has("failed")) return "failed";
   // Rows show Done only for ready threads, so the dot follows the same rule.
   const hasUnread = threads.some(
-    (thread) => resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread),
+    (thread) => statusOf(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
-  if (statuses.has("working") || statuses.has("preparing")) return "working";
+  if (statuses.has("working") || statuses.has("preparing") || statuses.has("swarming")) {
+    return "working";
+  }
   return null;
 }
 

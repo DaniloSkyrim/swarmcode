@@ -204,6 +204,24 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
+  it("presents idle or running coordinators with an active swarm as swarming, below attention states", () => {
+    const idle = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "completed" })),
+    );
+    expect(resolveThreadListV2Status(idle, { activeSwarm: true })).toBe("swarming");
+    expect(resolveThreadListV2RowStatus(idle, { activeSwarm: true })).toBe("swarming");
+    expect(
+      resolveThreadListV2Status({ ...idle, hasPendingApprovals: true }, { activeSwarm: true }),
+    ).toBe("approval");
+    expect(
+      resolveThreadListV2Status({ ...idle, hasPendingUserInput: true }, { activeSwarm: true }),
+    ).toBe("input");
+    expect(
+      resolveThreadListV2Status({ ...idle, pendingGuestMessageCount: 1 }, { activeSwarm: true }),
+    ).toBe("request");
+  });
+
   it.each([
     { roster: "dev server", task: { kind: "command" }, status: "ready" },
     { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },

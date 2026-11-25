@@ -8,10 +8,16 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
+import { useActiveSwarmThreads } from "../../state/agySwarm";
 import { olderSettledThreads } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
 
+const EMPTY_ACTIVE_SWARMS: ReadonlyMap<string, string> = new Map();
+
+vi.mock("../../state/agySwarm", () => ({
+  useActiveSwarmThreads: vi.fn(() => EMPTY_ACTIVE_SWARMS),
+}));
 vi.mock("../../state/threads", () => ({
   olderSettledThreads: { shelfAtom: vi.fn() },
   threadFamilies: { mountRows: () => () => {} },
@@ -241,4 +247,18 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   expect(loaded.layout.items).toHaveLength(160);
   expect(loaded.olderSettledShelf.isListed(threads[150]!)).toBe(true);
   expect(loaded.items).not.toBe(loading.items);
+
+  vi.mocked(useActiveSwarmThreads).mockReturnValue(
+    new Map([[`${environmentId}:thread-0`, "2026-01-02T00:00:00.000Z"]]),
+  );
+  await act(async () =>
+    root.render(<Probe input={{ ...input, workingShelfExpanded: true }} tab="chats" />),
+  );
+  const swarming = seen.at(-1)!;
+  expect(swarming.layout.workingCount).toBe(1);
+  expect(swarming.layout.workingShelfHeaderIndex).not.toBeNull();
+  expect(swarming.layout.items[swarming.layout.workingShelfHeaderIndex!]?.thread.id).toBe(
+    "thread-0",
+  );
+  vi.mocked(useActiveSwarmThreads).mockReturnValue(EMPTY_ACTIVE_SWARMS);
 });

@@ -109,14 +109,35 @@ export type AgySwarmGetInput = typeof AgySwarmGetInput.Type;
 export const AgySwarmGetResult = Schema.NullOr(AgySwarmSnapshot);
 export type AgySwarmGetResult = typeof AgySwarmGetResult.Type;
 
+/** Coordinator thread currently running an active swarm with at least one working worker. */
+export const AgyActiveSwarm = Schema.Struct({
+  threadId: ThreadId,
+  startedAt: Schema.String,
+});
+export type AgyActiveSwarm = typeof AgyActiveSwarm.Type;
+
+export const AgyActiveSwarmsSnapshot = Schema.Struct({
+  active: Schema.Array(AgyActiveSwarm),
+});
+export type AgyActiveSwarmsSnapshot = typeof AgyActiveSwarmsSnapshot.Type;
+
 export const AGY_WS_METHODS = {
   swarmSubscribe: "agy.swarm.subscribe",
+  swarmActiveSubscribe: "agy.swarm.activeSubscribe",
 } as const;
 
 /** Emits the swarm of a thread (as coordinator or member) now and on every change. */
 export const AgyWsSwarmSubscribeRpc = Rpc.make(AGY_WS_METHODS.swarmSubscribe, {
   payload: AgySwarmGetInput,
   success: AgySwarmGetResult,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+/** Emits active coordinator threads (with live working workers) across the environment. */
+export const AgyWsSwarmActiveSubscribeRpc = Rpc.make(AGY_WS_METHODS.swarmActiveSubscribe, {
+  payload: Schema.Struct({}),
+  success: AgyActiveSwarmsSnapshot,
   error: EnvironmentAuthorizationError,
   stream: true,
 });

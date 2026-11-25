@@ -51,6 +51,7 @@ import {
   FolderGit2Icon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
@@ -82,6 +83,7 @@ import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useSidebarLinkedIssueState } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
+import { useActiveSwarmStartedAt } from "../../state/agySwarm";
 import { threadEnvironment } from "../../state/threads";
 import {
   readEnvironmentScope,
@@ -585,6 +587,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
+  swarming: NetworkIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
   request: UserRoundIcon,
@@ -798,8 +801,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
 
+  const activeSwarmStartedAt = useActiveSwarmStartedAt(thread.environmentId, thread.id);
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarRowStatus({ ...thread, lastVisitedAt });
+  const status = resolveSidebarRowStatus(
+    { ...thread, lastVisitedAt },
+    { activeSwarm: activeSwarmStartedAt !== null },
+  );
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -813,7 +820,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
-  const topStatus =
+  const upstreamTopStatus =
     status === "preparing" || status === "working"
       ? {
           label:
@@ -874,6 +881,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           className: "text-success-foreground",
                         }
                       : null;
+  const topStatus =
+    status === "swarming"
+      ? {
+          label: gt("Swarming", { $context: "thread status" }),
+          icon: "swarming" as const,
+          className: "text-violet-700 dark:text-violet-300",
+        }
+      : upstreamTopStatus;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1651,6 +1666,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                               <WorkingDuration
                                 environmentId={thread.environmentId}
                                 startedAt={resolveWorkingStartedAt(thread)}
+                              />
+                            </span>
+                          ) : status === "swarming" ? (
+                            <span aria-hidden>
+                              <WorkingDuration
+                                environmentId={thread.environmentId}
+                                startedAt={activeSwarmStartedAt ?? resolveWorkingStartedAt(thread)}
                               />
                             </span>
                           ) : status === "waiting" ? (

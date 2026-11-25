@@ -1762,6 +1762,24 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+    expect(resolveSidebarFolderDot([idle], { isSwarmActive: () => true })).toBe("working");
+    expect(resolveSidebarThreadStatus(idle, { activeSwarm: true })).toBe("swarming");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true }, { activeSwarm: true }),
+    ).toBe("approval");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true }, { activeSwarm: true }),
+    ).toBe("input");
+    expect(resolveWindowTitleThreadStatus(idle, undefined, { activeSwarm: true })).toBe("Working");
+    expect(
+      shouldRecedeSidebarThread({
+        status: "swarming",
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(true);
   });
 });
 
