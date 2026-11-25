@@ -66,6 +66,12 @@ export interface ChannelInput {
   readonly name?: string | undefined;
 }
 
+export interface PlanUpdateInput {
+  readonly goal?: AgySwarmPlan["goal"] | undefined;
+  readonly tasks?: AgySwarmPlan["tasks"] | undefined;
+  readonly threads?: AgySwarmPlan["threads"] | undefined;
+}
+
 export interface AgySwarmShape {
   readonly status: (callerThreadId: ThreadId) => Effect.Effect<string, AgySwarmError>;
   readonly models: (callerThreadId: ThreadId) => Effect.Effect<string, AgySwarmError>;
@@ -83,7 +89,7 @@ export interface AgySwarmShape {
   ) => Effect.Effect<string, AgySwarmError>;
   readonly setPlan: (
     callerThreadId: ThreadId,
-    plan: AgySwarmPlan,
+    plan: PlanUpdateInput,
   ) => Effect.Effect<string, AgySwarmError>;
   readonly channel: (
     callerThreadId: ThreadId,
@@ -122,6 +128,13 @@ export interface AgySwarmShape {
 }
 
 export class AgySwarm extends Context.Service<AgySwarm, AgySwarmShape>()("t3/agy/swarm/AgySwarm") {}
+
+// Keyed by stateDir so ProviderTurnStartService can read coordinator state without a layer cycle.
+const activeCoordinatorsByStateDir = new Map<string, Set<string>>();
+
+/** Whether `threadId` currently coordinates an open swarm with at least one live worker. */
+export const isActiveSwarmCoordinator = (stateDir: string, threadId: ThreadId): boolean =>
+  activeCoordinatorsByStateDir.get(stateDir)?.has(threadId) === true;
 
 const MAX_WAIT_SECONDS = 45;
 const MONITOR_INTERVAL = Duration.seconds(60);
@@ -202,6 +215,22 @@ const make = Effect.gen(function* () {
   const dir = path.join(config.stateDir, "agy", "swarms");
   const swarms = new Map<string, Board.StoredSwarm>();
   const byThread = new Map<string, string>();
+  const activeCoordinators = new Set<string>();
+  activeCoordinatorsByStateDir.set(config.stateDir, activeCoordinators);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      if (activeCoordinatorsByStateDir.get(config.stateDir) === activeCoordinators) {
+        activeCoordinatorsByStateDir.delete(config.stateDir);
+      }
+    }),
+  );
+  const syncActiveCoordinator = (swarm: Board.StoredSwarm) => {
+    const active =
+      swarm.doneAt === null &&
+      swarm.members.some((member) => member.role !== "coordinator" && Board.isLive(member));
+    if (active) activeCoordinators.add(swarm.coordinatorThreadId);
+    else activeCoordinators.delete(swarm.coordinatorThreadId);
+  };
   /** Threads parked in `swarm_wait`: a post reaches them there, not as a queued message. */
   const parked = new Map<string, number>();
   /** The highest post each thread was last rung for. */
@@ -222,9 +251,11 @@ const make = Effect.gen(function* () {
     if (swarm.version !== 1) continue;
     swarms.set(swarm.id, swarm);
     for (const member of swarm.members) byThread.set(member.threadId, swarm.id);
+    syncActiveCoordinator(swarm);
   }
 
   const save = (swarm: Board.StoredSwarm) => {
+    syncActiveCoordinator(swarm);
     const file = path.join(dir, `${swarm.id}.json`);
     return encodeJson(swarm).pipe(
       Effect.flatMap((json) => fileSystem.writeFileString(`${file}.tmp`, json)),
@@ -421,10 +452,14 @@ const make = Effect.gen(function* () {
         ? `[swarm] New on the board for you, ${target.name}:`
         : `[swarm] ${unread.length} new posts on the board for you, ${target.name}` +
           (unread.length > shown.length ? ` (latest ${shown.length} below):` : ":");
+    const coordinatorHint =
+      target.role === "coordinator"
+        ? "\nCoordinate via the T3 Code MCP swarm tools: keep this turn short, do not enter plan mode or do worker tasks yourself; judge, dispatch or direct workers, and end your turn."
+        : "";
     const text =
       `${heading}\n${shown.map(Board.formatPost).join("\n\n")}\n\n` +
       `Catch up with read_board{since:${target.lastReadSeq}} and act on what is yours. ` +
-      `If nothing is, end your turn.`;
+      `If nothing is, end your turn.${coordinatorHint}`;
     yield* threads
       .sendToThread({
         projectId: ProjectId.make(swarm.projectId),
@@ -803,13 +838,22 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const setPlan: AgySwarmShape["setPlan"] = (callerThreadId, plan) =>
+  const setPlan: AgySwarmShape["setPlan"] = (callerThreadId, input) =>
     locked(
       Effect.gen(function* () {
         const { swarm, member } = yield* ensureSwarm(callerThreadId);
         if (member.role !== "coordinator")
           return yield* refuse("Only the coordinator sets the overview.");
-        swarm.plan = plan;
+        const existing = swarm.plan;
+        const goal = input.goal ?? existing?.goal;
+        if (goal === undefined) {
+          return yield* refuse("This action needs `goal` on the first plan call.");
+        }
+        swarm.plan = {
+          goal,
+          tasks: input.tasks ?? existing?.tasks ?? {},
+          threads: input.threads ?? existing?.threads ?? [],
+        };
         yield* save(swarm);
         return "Overview updated.";
       }),

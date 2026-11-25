@@ -492,3 +492,75 @@ it.effect(
         }),
     ),
 );
+
+it.effect("setPlan preserves omitted fields on updates and requires goal on the first call", () =>
+  withSwarmHarness(({ swarm, coordinatorId }) =>
+    Effect.gen(function* () {
+      const missingGoal = yield* Effect.result(
+        swarm.setPlan(coordinatorId, { tasks: { worker: "first piece" } }),
+      );
+      assert.strictEqual(missingGoal._tag, "Failure");
+
+      yield* swarm.setPlan(coordinatorId, {
+        goal: { title: "Ship Wave 2", line: "Complete all Wave 2 tracks." },
+        tasks: { worker: "build assets" },
+        threads: [{ id: "wave-2", title: "Wave 2", goal: "Art & QA", tasks: ["worker"] }],
+      });
+
+      // Updating only tasks keeps existing goal and threads intact.
+      yield* swarm.setPlan(coordinatorId, {
+        tasks: { worker: "build assets", reviewer: "verify assets" },
+      });
+      const afterTaskUpdate = (yield* swarm.snapshot(coordinatorId))?.plan;
+      assert.deepStrictEqual(afterTaskUpdate, {
+        goal: { title: "Ship Wave 2", line: "Complete all Wave 2 tracks." },
+        tasks: { worker: "build assets", reviewer: "verify assets" },
+        threads: [{ id: "wave-2", title: "Wave 2", goal: "Art & QA", tasks: ["worker"] }],
+      });
+
+      // Passing threads: [] explicitly clears groups while keeping goal and tasks.
+      yield* swarm.setPlan(coordinatorId, { threads: [] });
+      const afterClearThreads = (yield* swarm.snapshot(coordinatorId))?.plan;
+      assert.deepStrictEqual(afterClearThreads, {
+        goal: { title: "Ship Wave 2", line: "Complete all Wave 2 tracks." },
+        tasks: { worker: "build assets", reviewer: "verify assets" },
+        threads: [],
+      });
+    }),
+  ),
+);
+
+it.effect(
+  "coordinator wakes carry coordinator guidance and active coordinator tracks live workers",
+  () =>
+    withSwarmHarness(({ swarm, coordinatorId, workerId, stateDir, sent, setStatus }) =>
+      Effect.gen(function* () {
+        // Harness starts with one live worker, so coordinator is active and worker is not.
+        assert.isTrue(AgySwarm.isActiveSwarmCoordinator(stateDir, coordinatorId));
+        assert.isFalse(AgySwarm.isActiveSwarmCoordinator(stateDir, workerId));
+
+        // Waking the coordinator includes coordinator guidance; waking a worker does not.
+        yield* swarm.post(workerId, { text: "@coordinator [done] finished task" });
+        const coordWake = sent.find((entry) => entry.threadId === coordinatorId);
+        assert.isDefined(coordWake);
+        assert.include(coordWake!.text, "do not enter plan mode");
+
+        setStatus(workerId, "completed");
+        yield* swarm.post(coordinatorId, { text: "@worker please run follow-up" });
+        const workerWake = sent.find((entry) => entry.threadId === workerId);
+        assert.isDefined(workerWake);
+        assert.notInclude(workerWake!.text, "do not enter plan mode");
+
+        // Killing the last live worker deactivates coordinator reminder; adding a new worker re-enables it.
+        yield* swarm.kill(coordinatorId, "worker");
+        assert.isFalse(AgySwarm.isActiveSwarmCoordinator(stateDir, coordinatorId));
+
+        yield* swarm.add(coordinatorId, { name: "worker-2", brief: "next wave" });
+        assert.isTrue(AgySwarm.isActiveSwarmCoordinator(stateDir, coordinatorId));
+
+        // Marking the swarm done deactivates coordinator reminder.
+        yield* swarm.post(coordinatorId, { text: "[done] all complete" });
+        assert.isFalse(AgySwarm.isActiveSwarmCoordinator(stateDir, coordinatorId));
+      }),
+    ),
+);
