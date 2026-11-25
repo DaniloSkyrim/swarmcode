@@ -2410,7 +2410,8 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
-        [WS_METHODS.workflowsSubscribe]: (_input) => workflows.watch,
+        [WS_METHODS.workflowsSubscribe]: (input) =>
+          input.changes === true ? workflows.watch : Workflows.wholeLists(workflows.watch),
         [AGY_WS_METHODS.swarmSubscribe]: (input) =>
           agySwarm._tag === "Some" ? agySwarm.value.changes(input.threadId) : Stream.succeed(null),
         [AGY_WS_METHODS.swarmActiveSubscribe]: (_input) =>
@@ -2419,12 +2420,28 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
-          workflows
-            .answer(input.runId, input.name, {
-              choice: input.choice,
-              ...(input.reason === undefined ? {} : { reason: input.reason }),
-            })
-            .pipe(Effect.mapError(toWorkflowRequestError)),
+          serverAuth.listClientSessions(currentSessionId).pipe(
+            Effect.map((sessions) =>
+              EnvironmentAuth.clientSessionLabel(
+                sessions.find((session) => session.current)?.client,
+              ),
+            ),
+            Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
+            // The label names it to others; the session tells its own client the answer is its own.
+            Effect.map((label) => ({ label, sessionId: currentSessionId })),
+            Effect.flatMap((answeredBy) =>
+              workflows.answer(
+                input.runId,
+                input.name,
+                {
+                  choice: input.choice,
+                  ...(input.reason === undefined ? {} : { reason: input.reason }),
+                },
+                answeredBy,
+              ),
+            ),
+            Effect.mapError(toWorkflowRequestError),
+          ),
         [WS_METHODS.workflowsResume]: (input) =>
           workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsCancel]: (input) =>
