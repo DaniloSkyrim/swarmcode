@@ -204,3 +204,139 @@ it("a member is rung once for the posts that named it, not again until the board
   coordinator.lastReadSeq = Board.head(swarm);
   assert.deepEqual(Board.unreadWakePosts(swarm, coordinator, 0), []);
 });
+
+it("posting mid-turn does not skip unread peer posts", () => {
+  const swarm = swarmWith(["alpha", "beta"]);
+  const alpha = Board.memberByName(swarm, "alpha")!;
+  const p1 = post(swarm, "beta", "@alpha check this first", 1);
+  alpha.lastWakeSeq = p1.seq;
+
+  // Alpha posts before reading #1: lastReadSeq stays 0 so #1 is never lost.
+  const p2 = post(swarm, "alpha", "@coordinator mid-turn update", 2);
+  assert.strictEqual(alpha.lastReadSeq, 0);
+  assert.deepStrictEqual(
+    Board.unreadWakePosts(swarm, alpha, 0).map((item) => item.seq),
+    [p1.seq],
+  );
+  assert.deepStrictEqual(
+    Board.unreadVisiblePosts(swarm, alpha).map((item) => item.seq),
+    [p1.seq],
+  );
+
+  // Once caught up, posting contiguously advances lastReadSeq so own post is not unread.
+  alpha.lastReadSeq = p2.seq;
+  const p3 = post(swarm, "alpha", "@coordinator follow-up", 3);
+  assert.strictEqual(alpha.lastReadSeq, p3.seq);
+});
+
+it("coordinator defaults to main after creating private channels, and private channels stay private", () => {
+  const swarm = swarmWith(["ui", "api"]);
+  swarm.channels.push({ name: "web", topic: "", createdBy: "coordinator", archived: false });
+  Board.memberByName(swarm, Board.COORDINATOR)!.channels.push("web");
+  Board.memberByName(swarm, "ui")!.channels.push("web");
+
+  // Coordinator omitting channel still posts to #main, not #web.
+  const coordPost = post(swarm, Board.COORDINATOR, "status update", 1);
+  assert.strictEqual(coordPost.channel, Board.MAIN_CHANNEL);
+
+  // Worker in #web mentioning @api (not in #web) neither wakes api nor leaks on explicit read.
+  const secret = Board.appendPost(swarm, {
+    from: "ui",
+    text: "@api check private detail",
+    channel: "web",
+    now: at(2),
+  });
+  assert.isFalse("refused" in secret);
+  if ("refused" in secret) return;
+  assert.deepStrictEqual(Board.wakeTargets(swarm, secret), []);
+  assert.deepStrictEqual(Board.hiddenMentionedMembers(swarm, secret), ["api"]);
+
+  const api = Board.memberByName(swarm, "api")!;
+  assert.deepStrictEqual(Board.readPosts(swarm, api, { since: 0, limit: 10, channel: "web" }), []);
+  assert.lengthOf(
+    Board.readPosts(swarm, Board.memberByName(swarm, Board.COORDINATOR)!, {
+      since: 0,
+      limit: 10,
+      channel: "web",
+    }),
+    1,
+  );
+});
+
+it("allows digit-prefixed names, blocks coordinator-* prefix, and attributes briefs cleanly", () => {
+  const swarm = swarmWith(["2fa", "api"]);
+  assert.isNull(Board.validateNewName(swarm, "3d-renderer"));
+  assert.isNotNull(Board.validateNewName(swarm, "coordinator-2"));
+
+  // A brief from coordinator targeting 2fa mentions only 2fa (even if text references @api).
+  const brief = Board.appendPost(swarm, {
+    from: Board.COORDINATOR,
+    text: "@2fa implement OTP and coordinate with @api later",
+    kind: "brief",
+    briefTarget: "2fa",
+    now: at(0),
+  });
+  assert.isFalse("refused" in brief);
+  if ("refused" in brief) return;
+  assert.deepStrictEqual(brief.mentions, ["2fa"]);
+  assert.deepStrictEqual(Board.graphEdges(swarm), [
+    { from: Board.COORDINATOR, to: "2fa", count: 1 },
+  ]);
+
+  // If 2fa stalls on its first turn, detectStall catches it and does NOT blame api.
+  const idle = swarm.members.map((member) => ({
+    name: member.name,
+    state: "waiting" as const,
+    lastPostSeq: Board.lastPostSeq(swarm, member.name),
+  }));
+  const alert = Board.detectStall(swarm, idle, {
+    nowMs: Date.parse(at(5)),
+    quietMs: 3 * 60_000,
+    repeatMs: 10 * 60_000,
+  });
+  assert.strictEqual(alert?.to, "2fa");
+});
+
+it("detects shared-workspace ownership overlaps and ignores worktree or killed members", () => {
+  const members = [
+    {
+      name: "api",
+      workspace: "inherit" as const,
+      killedAt: null,
+      owns: ["apps/server/src/agy/**"],
+    },
+    {
+      name: "wt-worker",
+      workspace: "worktree" as const,
+      killedAt: null,
+      owns: ["apps/server/src/agy/swarm.ts"],
+    },
+    {
+      name: "retired",
+      workspace: "inherit" as const,
+      killedAt: at(1),
+      owns: ["apps/server/src/agy/swarm.ts"],
+    },
+  ];
+  const overlaps = Board.findOwnershipOverlaps(members, {
+    name: "ui",
+    workspace: "inherit",
+    owns: ["./apps\\server\\src\\agy\\swarm\\AgySwarm.ts", "apps/web/src"],
+  });
+  assert.deepStrictEqual(overlaps, [
+    {
+      member: "api",
+      ownPath: "./apps\\server\\src\\agy\\swarm\\AgySwarm.ts",
+      otherPath: "apps/server/src/agy/**",
+    },
+  ]);
+
+  assert.deepStrictEqual(
+    Board.findOwnershipOverlaps(members, {
+      name: "isolated",
+      workspace: "worktree",
+      owns: ["apps/server/src/agy/swarm.ts"],
+    }),
+    [],
+  );
+});

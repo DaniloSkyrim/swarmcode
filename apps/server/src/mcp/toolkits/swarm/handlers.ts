@@ -30,41 +30,58 @@ const asCaller = Effect.fn("SwarmHandlers.asCaller")(function* <A>(
 });
 
 export const layer = McpToolAccess.toLayer(SwarmToolkit, {
-  swarm: McpToolAccess.actsAsCaller((input) =>
+  t3_swarm: McpToolAccess.actsAsCaller((input) =>
     asCaller((swarm, threadId) =>
       Effect.gen(function* () {
         switch (input.action) {
           case "status":
             return { result: yield* swarm.status(threadId) };
           case "models":
-            return { result: yield* swarm.models(threadId) };
+            return { result: yield* swarm.models(threadId, { all: input.all }) };
           case "add": {
-            const tasks = input.tasks;
-            if (tasks !== undefined && !Array.isArray(tasks)) {
-              return yield* invalid("On add, tasks is a list with one entry per numbered worker.");
+            if (input.workers !== undefined) {
+              if (
+                input.name !== undefined ||
+                input.brief !== undefined ||
+                input.n !== undefined ||
+                input.workerTasks !== undefined
+              ) {
+                return yield* invalid(
+                  "Pass either `workers` for a batch or `name`/`brief` for a single/numbered add, not both.",
+                );
+              }
+              return { result: yield* swarm.add(threadId, { workers: input.workers }) };
             }
+            const tasks = input.workerTasks;
             return {
               result: yield* swarm.add(threadId, {
                 name: yield* required(input.name, "name"),
                 brief: yield* required(input.brief, "brief"),
                 model: input.model,
-                n: input.n ?? (Array.isArray(tasks) ? tasks.length : undefined),
-                tasks: Array.isArray(tasks) ? tasks : undefined,
+                reasoningEffort: input.reasoningEffort,
+                n: input.n ?? tasks?.length,
+                tasks,
                 fork: input.fork,
                 workspace: input.workspace,
                 channels: input.channels,
+                owns: input.owns,
               }),
             };
           }
           case "kill":
-            return { result: yield* swarm.kill(threadId, yield* required(input.name, "name")) };
+            return {
+              result: yield* swarm.kill(threadId, yield* required(input.name, "name"), {
+                force: input.force,
+              }),
+            };
           case "model":
             return {
-              result: yield* swarm.setModel(
-                threadId,
-                yield* required(input.name, "name"),
-                yield* required(input.model, "model"),
-              ),
+              result: yield* swarm.setModel(threadId, {
+                name: input.name,
+                model: yield* required(input.model, "model"),
+                reasoningEffort: input.reasoningEffort,
+                resume: input.resume,
+              }),
             };
           case "title":
             return {
@@ -75,14 +92,14 @@ export const layer = McpToolAccess.toLayer(SwarmToolkit, {
               ),
             };
           case "plan": {
-            const tasks = input.tasks;
-            if (Array.isArray(tasks)) {
-              return yield* invalid("On plan, tasks maps each worker to its piece in a few words.");
-            }
+            const tasks =
+              input.planTasks === undefined
+                ? undefined
+                : Object.fromEntries(input.planTasks.map((entry) => [entry.worker, entry.summary]));
             return {
               result: yield* swarm.setPlan(threadId, {
                 goal: input.goal,
-                tasks: tasks as Record<string, string> | undefined,
+                tasks,
                 threads: input.threads,
               }),
             };
@@ -102,9 +119,13 @@ export const layer = McpToolAccess.toLayer(SwarmToolkit, {
   ),
   post_message: McpToolAccess.actsAsCaller((input) =>
     asCaller((swarm, threadId) =>
-      swarm
-        .post(threadId, { text: input.text, channel: input.channel })
-        .pipe(Effect.map((result) => ({ seq: result.seq, mentions: [...result.mentions] }))),
+      swarm.post(threadId, { text: input.text, channel: input.channel }).pipe(
+        Effect.map((result) => ({
+          seq: result.seq,
+          mentions: [...result.mentions],
+          ...(result.note === undefined ? {} : { note: result.note }),
+        })),
+      ),
     ),
   ),
   read_board: McpToolAccess.readsAsCaller((input) =>

@@ -1,16 +1,25 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { CheckIcon, NetworkIcon } from "lucide-react";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { useAtomValue } from "@effect/atom-react";
+import type { AgySwarmMetrics, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { CheckIcon, NetworkIcon, UserPlusIcon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type KeyboardEvent, useId, useState } from "react";
 
 import { cn } from "~/lib/utils";
-import { useAgySwarm } from "~/state/agySwarm";
+import { agySwarmEnvironment, useAgySwarm } from "~/state/agySwarm";
+import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SwarmAddWorkerDialog } from "./SwarmAddWorkerDialog";
 import { SwarmBoard } from "./SwarmBoard";
 import { SwarmGraph } from "./SwarmGraph";
 import { SwarmMembers } from "./SwarmMembers";
 import { SwarmOverview } from "./SwarmOverview";
-import { liveMemberCount, NO_POST_FILTER, type PostFilter } from "./swarmBoard.logic";
+import {
+  formatTokenCount,
+  liveMemberCount,
+  NO_POST_FILTER,
+  type PostFilter,
+} from "./swarmBoard.logic";
 
 const VIEW_LABELS = {
   board: msg("Board", { $context: "swarm tab, the message board" }),
@@ -52,6 +61,60 @@ function SwarmStatus(props: { done: boolean }) {
   );
 }
 
+function SwarmMetricsSummary(props: { metrics: AgySwarmMetrics | undefined }) {
+  const gt = useGT();
+  const { metrics } = props;
+  if (!metrics || (metrics.turns === 0 && metrics.totalTokens === 0)) return null;
+  const tokensText = formatTokenCount(metrics.totalTokens);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground" />}
+      >
+        {metrics.totalTokens > 0 ? (
+          <T>
+            <Var>{metrics.turns}</Var>t · <Var>{tokensText}</Var>
+          </T>
+        ) : (
+          <T>
+            <Var>{metrics.turns}</Var>t
+          </T>
+        )}
+      </TooltipTrigger>
+      <TooltipPopup>
+        <div className="flex flex-col gap-0.5 text-xs tabular-nums">
+          <span>
+            {gt("{count, plural, one {{count} turn} other {{count} turns}}", {
+              count: metrics.turns,
+            })}
+          </span>
+          {metrics.totalTokens > 0 ? (
+            <>
+              <span>
+                {gt("Total: {tokens} tokens", { tokens: metrics.totalTokens.toLocaleString() })}
+              </span>
+              <span>
+                {gt("Input: {input} · Output: {output}", {
+                  input: formatTokenCount(metrics.inputTokens),
+                  output: formatTokenCount(metrics.outputTokens),
+                })}
+              </span>
+              {metrics.cachedInputTokens > 0 || metrics.reasoningTokens > 0 ? (
+                <span>
+                  {gt("Cached: {cached} · Reasoning: {reasoning}", {
+                    cached: formatTokenCount(metrics.cachedInputTokens),
+                    reasoning: formatTokenCount(metrics.reasoningTokens),
+                  })}
+                </span>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: EnvironmentId }) {
   const gt = useGT();
   const resolve = useMessages();
@@ -67,6 +130,8 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
   // Kept here so a search or filter survives a visit to another tab.
   const [filter, setFilter] = useState<PostFilter>(NO_POST_FILTER);
   const [follow, setFollow] = useState(true);
+  const [addWorkerOpen, setAddWorkerOpen] = useState(false);
+  const canAddWorker = useAtomValue(agySwarmEnvironment.add.permissionAtom(props.environmentId));
   const { swarm, loaded, error } = useAgySwarm(props.environmentId, props.threadRef.threadId);
 
   if (swarm === null) {
@@ -115,11 +180,29 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="swarm-panel">
       <header className="shrink-0 border-b border-border/60 px-4 pt-3">
-        <div className="flex min-h-5 items-center gap-3">
+        <div className="flex min-h-5 items-center gap-2">
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
             {swarm.title}
           </h2>
+          <SwarmMetricsSummary metrics={swarm.metrics} />
           <SwarmStatus done={swarm.doneAt !== null} />
+          {canAddWorker ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={gt("Add worker")}
+                    onClick={() => setAddWorkerOpen(true)}
+                  />
+                }
+              >
+                <UserPlusIcon />
+              </TooltipTrigger>
+              <TooltipPopup>{gt("Add worker")}</TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
         <div
           role="tablist"
@@ -180,6 +263,14 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
           <SwarmOverview swarm={swarm} plan={swarm.plan} />
         ) : null}
       </div>
+      {canAddWorker ? (
+        <SwarmAddWorkerDialog
+          open={addWorkerOpen}
+          onOpenChange={setAddWorkerOpen}
+          swarm={swarm}
+          threadRef={props.threadRef}
+        />
+      ) : null}
     </div>
   );
 }

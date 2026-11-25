@@ -11,7 +11,7 @@ import { useMessages } from "gt-react";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery } from "./query";
 
-const agySwarmEnvironment = createAgySwarmEnvironmentAtoms(connectionAtomRuntime);
+export const agySwarmEnvironment = createAgySwarmEnvironmentAtoms(connectionAtomRuntime);
 
 export interface AgySwarmView {
   /** Null while loading and when the thread is in no swarm; `loaded` tells them apart. */

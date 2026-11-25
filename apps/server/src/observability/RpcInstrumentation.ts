@@ -278,6 +278,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeAuthAccess]: "auth",
   [AGY_WS_METHODS.swarmSubscribe]: "agy",
   [AGY_WS_METHODS.swarmActiveSubscribe]: "agy",
+  [AGY_WS_METHODS.swarmPost]: "agy",
+  [AGY_WS_METHODS.swarmKill]: "agy",
+  [AGY_WS_METHODS.swarmRetry]: "agy",
+  [AGY_WS_METHODS.swarmAdd]: "agy",
+  [AGY_WS_METHODS.swarmLoadPosts]: "agy",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

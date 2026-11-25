@@ -1,27 +1,134 @@
+import { useAtomValue } from "@effect/atom-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { AgySwarmMember, AgySwarmSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sideThreadOpenIntentOf } from "@t3tools/client-runtime/side-thread";
-import { SearchIcon } from "lucide-react";
-import { T, useGT } from "gt-react";
+import {
+  FolderIcon,
+  GitBranchIcon,
+  PlayIcon,
+  RotateCwIcon,
+  SearchIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useState } from "react";
 
 import { openSideThread } from "~/lib/sideChatPane";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { agySwarmEnvironment } from "~/state/agySwarm";
+import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
+import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Empty, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MEMBER_STATE_TEXT, SwarmAvatar, SwarmStateDot, useMemberStateLabel } from "./SwarmAvatar";
 import { SwarmMemberModelControls } from "./SwarmMemberModelControls";
 import {
+  formatTokenCount,
   groupMembers,
+  isDirtyWorktreeKillError,
   memberBee,
   memberCue,
   memberSnippet,
   type BeeColors,
   type BeeCue,
 } from "./swarmBoard.logic";
+
+function MemberMetaRow(props: { member: AgySwarmMember }) {
+  const gt = useGT();
+  const { member } = props;
+  const branchLabel = member.branch ?? (member.workspace === "worktree" ? gt("worktree") : null);
+  const owns = member.owns ?? [];
+  const metrics = member.metrics;
+  const hasMetrics = metrics !== undefined && (metrics.turns > 0 || metrics.totalTokens > 0);
+  if (!branchLabel && owns.length === 0 && !hasMetrics) return null;
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-muted-foreground/85">
+      {branchLabel ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex max-w-[12rem] items-center gap-1 truncate font-mono" />
+            }
+          >
+            <GitBranchIcon aria-hidden className="size-3 shrink-0" />
+            <span className="truncate">{branchLabel}</span>
+          </TooltipTrigger>
+          <TooltipPopup>
+            {member.worktreePath ? `${branchLabel} (${member.worktreePath})` : branchLabel}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {owns.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex max-w-[12rem] items-center gap-1 truncate font-mono" />
+            }
+          >
+            <FolderIcon aria-hidden className="size-3 shrink-0" />
+            <span className="truncate">
+              {owns.length === 1
+                ? owns[0]
+                : gt("{first} +{rest}", { first: owns[0]!, rest: owns.length - 1 })}
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup>
+            <div className="flex flex-col gap-0.5 font-mono text-xs">
+              {owns.map((ownedPath) => (
+                <span key={ownedPath}>{ownedPath}</span>
+              ))}
+            </div>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {hasMetrics ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="shrink-0 font-mono tabular-nums" />}>
+            {metrics.totalTokens > 0
+              ? `${metrics.turns}t · ${formatTokenCount(metrics.totalTokens)}`
+              : `${metrics.turns}t`}
+          </TooltipTrigger>
+          <TooltipPopup>
+            <div className="flex flex-col gap-0.5 text-xs tabular-nums">
+              <span>
+                {gt("{count, plural, one {{count} turn} other {{count} turns}}", {
+                  count: metrics.turns,
+                })}
+              </span>
+              {metrics.totalTokens > 0 ? (
+                <span>
+                  {gt("Input: {input} · Output: {output}", {
+                    input: formatTokenCount(metrics.inputTokens),
+                    output: formatTokenCount(metrics.outputTokens),
+                  })}
+                </span>
+              ) : null}
+            </div>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </span>
+  );
+}
 
 function MemberRow(props: {
   member: AgySwarmMember;
@@ -30,19 +137,73 @@ function MemberRow(props: {
   snippet: string;
   current: boolean;
   threadRef: ScopedThreadRef;
+  canRetry: boolean;
+  canKill: boolean;
+  retrying: boolean;
+  onRetry: (member: AgySwarmMember) => void;
+  onRequestKill: (member: AgySwarmMember) => void;
   onOpen: (member: AgySwarmMember, intent: "primary" | "alternate") => void;
 }) {
+  const gt = useGT();
   const stateLabel = useMemberStateLabel();
   const { member } = props;
   const live = member.state !== "killed";
   const model = live ? null : member.model;
+  const showRetry =
+    live && props.canRetry && (member.state === "stopped" || member.state === "waiting");
+  const showKill = live && props.canKill && member.role !== "coordinator";
   const controls = live ? (
-    <div className="ps-12 pe-2 pb-1">
-      <SwarmMemberModelControls
-        threadRef={props.threadRef}
-        memberName={member.name}
-        fallbackModel={member.model}
-      />
+    <div className="flex flex-wrap items-center gap-1 ps-12 pe-2 pb-1">
+      <div className="min-w-0 flex-1">
+        <SwarmMemberModelControls
+          threadRef={props.threadRef}
+          memberName={member.name}
+          fallbackModel={member.model}
+        />
+      </div>
+      {showRetry ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                disabled={props.retrying}
+                aria-label={
+                  member.state === "stopped"
+                    ? gt("Retry {member}", { member: member.name })
+                    : gt("Wake {member}", { member: member.name })
+                }
+                onClick={() => props.onRetry(member)}
+              />
+            }
+          >
+            {member.state === "stopped" ? <RotateCwIcon /> : <PlayIcon />}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {member.state === "stopped" ? gt("Retry member") : gt("Wake member")}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {showKill ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                aria-label={gt("Retire {member}", { member: member.name })}
+                onClick={() => props.onRequestKill(member)}
+              />
+            }
+          >
+            <Trash2Icon />
+          </TooltipTrigger>
+          <TooltipPopup>{gt("Retire worker")}</TooltipPopup>
+        </Tooltip>
+      ) : null}
     </div>
   ) : null;
   const content = (
@@ -80,6 +241,7 @@ function MemberRow(props: {
             {props.snippet ? <span className="min-w-0 truncate">{props.snippet}</span> : null}
           </span>
         ) : null}
+        <MemberMetaRow member={member} />
       </span>
     </>
   );
@@ -131,9 +293,30 @@ function MemberSection(props: { label: ReactNode; count: number; children: React
 
 export function SwarmMembers(props: { swarm: AgySwarmSnapshot; threadRef: ScopedThreadRef }) {
   const gt = useGT();
+  const m = useMessages();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [retiredOpen, setRetiredOpen] = useState(false);
+  const [retryingName, setRetryingName] = useState<string | null>(null);
+  const [killPrompt, setKillPrompt] = useState<{
+    member: AgySwarmMember;
+    dirtyReason: string | null;
+    pending: boolean;
+  } | null>(null);
+
+  const canRetry = useAtomValue(
+    agySwarmEnvironment.retry.permissionAtom(props.threadRef.environmentId),
+  );
+  const canKill = useAtomValue(
+    agySwarmEnvironment.kill.permissionAtom(props.threadRef.environmentId),
+  );
+  const retryMember = useOrchestrationCommand(agySwarmEnvironment.retry, {
+    label: "retry swarm member",
+  });
+  const killMember = useOrchestrationCommand(agySwarmEnvironment.kill, {
+    label: "retire swarm worker",
+  });
+
   // Only joins and posts that land while this tab is open animate a bee.
   const [opened] = useState(() => ({
     seq: props.swarm.head,
@@ -148,6 +331,73 @@ export function SwarmMembers(props: { swarm: AgySwarmSnapshot; threadRef: Scoped
       navigate: (target) =>
         void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(target) }),
     });
+
+  const handleRetry = async (member: AgySwarmMember) => {
+    if (retryingName !== null) return;
+    setRetryingName(member.name);
+    const result = await retryMember({
+      environmentId: props.threadRef.environmentId,
+      input: { threadId: props.threadRef.threadId, name: member.name },
+    });
+    setRetryingName(null);
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) return;
+      toastManager.add({
+        type: "error",
+        title: gt("Couldn't wake @{member}", { member: member.name }),
+        description: thrownErrorMessage(squashAtomCommandFailure(result), m) ?? gt("Try again."),
+      });
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: gt("Woke @{member}", { member: member.name }),
+      description: result.value.message,
+    });
+  };
+
+  const handleConfirmKill = async (force: boolean) => {
+    if (killPrompt === null || killPrompt.pending) return;
+    const target = killPrompt.member;
+    setKillPrompt({ member: target, dirtyReason: killPrompt.dirtyReason, pending: true });
+    const result = await killMember({
+      environmentId: props.threadRef.environmentId,
+      input: {
+        threadId: props.threadRef.threadId,
+        name: target.name,
+        ...(force ? { force: true } : {}),
+      },
+    });
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) {
+        setKillPrompt(null);
+        return;
+      }
+      const message = thrownErrorMessage(squashAtomCommandFailure(result), m);
+      if (!force && isDirtyWorktreeKillError(message)) {
+        setKillPrompt({
+          member: target,
+          dirtyReason: message ?? gt("This worktree has uncommitted changes."),
+          pending: false,
+        });
+        return;
+      }
+      setKillPrompt(null);
+      toastManager.add({
+        type: "error",
+        title: gt("Couldn't retire @{member}", { member: target.name }),
+        description: message ?? gt("Try again."),
+      });
+      return;
+    }
+    setKillPrompt(null);
+    toastManager.add({
+      type: "success",
+      title: gt("Retired @{member}", { member: target.name }),
+      description: result.value.message,
+    });
+  };
+
   const row = (member: AgySwarmMember) => (
     <MemberRow
       key={member.name}
@@ -157,6 +407,13 @@ export function SwarmMembers(props: { swarm: AgySwarmSnapshot; threadRef: Scoped
       snippet={memberSnippet(member, props.swarm.posts)}
       current={member.threadId === props.threadRef.threadId}
       threadRef={scopeThreadRef(props.threadRef.environmentId, member.threadId)}
+      canRetry={canRetry}
+      canKill={canKill}
+      retrying={retryingName === member.name}
+      onRetry={(target) => void handleRetry(target)}
+      onRequestKill={(target) =>
+        setKillPrompt({ member: target, dirtyReason: null, pending: false })
+      }
       onOpen={openMember}
     />
   );
@@ -232,6 +489,59 @@ export function SwarmMembers(props: { swarm: AgySwarmSnapshot; threadRef: Scoped
           ) : null}
         </div>
       )}
+      <AlertDialog
+        open={killPrompt !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !killPrompt?.pending) setKillPrompt(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {killPrompt?.dirtyReason ? (
+                <T>
+                  Discard uncommitted changes for @<Var>{killPrompt.member.name}</Var>?
+                </T>
+              ) : (
+                <T>
+                  Retire @<Var>{killPrompt?.member.name ?? ""}</Var>?
+                </T>
+              )}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {killPrompt?.dirtyReason ? (
+                killPrompt.dirtyReason
+              ) : killPrompt?.member.workspace === "worktree" ? (
+                <T>This stops the worker permanently and removes its isolated worktree if clean.</T>
+              ) : (
+                <T>This stops the worker permanently. Its conversation history stays readable.</T>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="ghost" disabled={killPrompt?.pending} />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
+            {killPrompt?.dirtyReason ? (
+              <Button
+                variant="destructive"
+                disabled={killPrompt.pending}
+                onClick={() => void handleConfirmKill(true)}
+              >
+                {killPrompt.pending ? <T>Retiring…</T> : <T>Force retire & discard</T>}
+              </Button>
+            ) : (
+              <Button
+                variant="destructive"
+                disabled={killPrompt?.pending}
+                onClick={() => void handleConfirmKill(false)}
+              >
+                {killPrompt?.pending ? <T>Retiring…</T> : <T>Retire worker</T>}
+              </Button>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </div>
   );
 }

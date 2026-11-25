@@ -1,5 +1,5 @@
 import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
-import { AGY_WS_METHODS } from "@t3tools/contracts";
+import { AGY_WS_METHODS, AgySwarmRequestError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
 import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
@@ -1519,6 +1519,14 @@ export const layerWsRpc = (
       // The service's messages are built from its own attributes, so they are safe to send.
       const toWorkflowRequestError = (error: Workflows.WorkflowError) =>
         new WorkflowRequestError({ message: error.message });
+      const toAgySwarmRequestError = (error: AgySwarm.AgySwarmError) =>
+        new AgySwarmRequestError({ message: error.message });
+      const requireAgySwarm = <A>(
+        run: (service: AgySwarm.AgySwarmShape) => Effect.Effect<A, AgySwarm.AgySwarmError>,
+      ) =>
+        agySwarm._tag === "Some"
+          ? run(agySwarm.value).pipe(Effect.mapError(toAgySwarmRequestError))
+          : Effect.fail(new AgySwarmRequestError({ message: "Swarm service is unavailable." }));
       const secretRequests = yield* SecretRequests.SecretRequests;
       const feedbackStore = yield* FeedbackStore.FeedbackStore;
       const guestShares = yield* GuestShareService.GuestShareService;
@@ -2416,6 +2424,54 @@ export const layerWsRpc = (
           agySwarm._tag === "Some" ? agySwarm.value.changes(input.threadId) : Stream.succeed(null),
         [AGY_WS_METHODS.swarmActiveSubscribe]: (_input) =>
           agySwarm._tag === "Some" ? agySwarm.value.activeChanges : Stream.succeed({ active: [] }),
+        [AGY_WS_METHODS.swarmPost]: (input) =>
+          requireAgySwarm((service) =>
+            service.userPost(input.threadId, {
+              text: input.text,
+              ...(input.channel === undefined ? {} : { channel: input.channel }),
+            }),
+          ),
+        [AGY_WS_METHODS.swarmKill]: (input) =>
+          requireAgySwarm((service) =>
+            service
+              .userKill(input.threadId, {
+                name: input.name,
+                ...(input.force === undefined ? {} : { force: input.force }),
+              })
+              .pipe(Effect.map((message) => ({ message }))),
+          ),
+        [AGY_WS_METHODS.swarmRetry]: (input) =>
+          requireAgySwarm((service) =>
+            service
+              .userRetry(input.threadId, {
+                name: input.name,
+                ...(input.message === undefined ? {} : { message: input.message }),
+              })
+              .pipe(Effect.map((message) => ({ message }))),
+          ),
+        [AGY_WS_METHODS.swarmAdd]: (input) =>
+          requireAgySwarm((service) =>
+            service
+              .userAdd(input.threadId, {
+                name: input.name,
+                brief: input.brief,
+                ...(input.model === undefined ? {} : { model: input.model }),
+                ...(input.reasoningEffort === undefined
+                  ? {}
+                  : { reasoningEffort: input.reasoningEffort }),
+                ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+                ...(input.channels === undefined ? {} : { channels: input.channels }),
+                ...(input.owns === undefined ? {} : { owns: input.owns }),
+              })
+              .pipe(Effect.map((message) => ({ message }))),
+          ),
+        [AGY_WS_METHODS.swarmLoadPosts]: (input) =>
+          requireAgySwarm((service) =>
+            service.loadPosts(input.threadId, {
+              beforeSeq: input.beforeSeq,
+              ...(input.limit === undefined ? {} : { limit: input.limit }),
+            }),
+          ),
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
