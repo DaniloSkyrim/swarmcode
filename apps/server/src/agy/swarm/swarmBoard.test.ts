@@ -340,3 +340,17 @@ it("detects shared-workspace ownership overlaps and ignores worktree or killed m
     [],
   );
 });
+
+it("grants swarm management rights only to coordinator and delegated managers", () => {
+  const swarm = swarmWith(["orchestrator", "worker"]);
+  const coordinator = Board.memberByName(swarm, Board.COORDINATOR)!;
+  const orchestrator = Board.memberByName(swarm, "orchestrator")!;
+  const worker = Board.memberByName(swarm, "worker")!;
+
+  assert.isTrue(Board.canManageSwarm(coordinator));
+  assert.isFalse(Board.canManageSwarm(orchestrator));
+  assert.isFalse(Board.canManageSwarm(worker));
+
+  orchestrator.canManage = true;
+  assert.isTrue(Board.canManageSwarm(orchestrator));
+});

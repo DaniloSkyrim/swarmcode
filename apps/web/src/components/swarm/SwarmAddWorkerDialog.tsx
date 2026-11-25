@@ -41,6 +41,8 @@ export function SwarmAddWorkerDialog(props: {
   const [name, setName] = useState("");
   const [brief, setBrief] = useState("");
   const [workspace, setWorkspace] = useState<"inherit" | "worktree">("inherit");
+  const [readOnly, setReadOnly] = useState(false);
+  const [manager, setManager] = useState(false);
   const [model, setModel] = useState("");
   const [ownsRaw, setOwnsRaw] = useState("");
   const [pending, setPending] = useState(false);
@@ -62,6 +64,8 @@ export function SwarmAddWorkerDialog(props: {
     setName("");
     setBrief("");
     setWorkspace("inherit");
+    setReadOnly(false);
+    setManager(false);
     setModel("");
     setOwnsRaw("");
     setSubmitError(null);
@@ -86,7 +90,9 @@ export function SwarmAddWorkerDialog(props: {
         threadId: props.threadRef.threadId,
         name: normalizedName,
         brief: brief.trim(),
-        workspace,
+        workspace: readOnly ? "inherit" : workspace,
+        ...(readOnly ? { readOnly: true } : {}),
+        ...(manager ? { manager: true } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
         ...(owns.length > 0 ? { owns } : {}),
       },
@@ -175,14 +181,52 @@ export function SwarmAddWorkerDialog(props: {
                 <Button
                   type="button"
                   size="xs"
-                  variant={workspace === "worktree" ? "default" : "outline"}
-                  aria-pressed={workspace === "worktree"}
-                  disabled={pending}
+                  variant={workspace === "worktree" && !readOnly ? "default" : "outline"}
+                  aria-pressed={workspace === "worktree" && !readOnly}
+                  disabled={pending || readOnly}
                   onClick={() => setWorkspace("worktree")}
                 >
                   <T>Isolated worktree</T>
                 </Button>
               </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-foreground">
+                <T>Role options</T>
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={readOnly ? "default" : "outline"}
+                  aria-pressed={readOnly}
+                  disabled={pending}
+                  onClick={() => {
+                    setReadOnly((current) => {
+                      const next = !current;
+                      if (next) setWorkspace("inherit");
+                      return next;
+                    });
+                  }}
+                >
+                  <T>Read-only</T>
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={manager ? "default" : "outline"}
+                  aria-pressed={manager}
+                  disabled={pending}
+                  onClick={() => setManager((current) => !current)}
+                >
+                  <T>Delegated manager</T>
+                </Button>
+              </div>
+              {readOnly ? (
+                <p className="text-xs text-muted-foreground">
+                  <T>Read-only workers share the workspace and cannot edit repository files.</T>
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">

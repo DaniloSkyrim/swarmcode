@@ -51,6 +51,9 @@ export interface StoredMember {
   worktreePath?: string | null;
   branch?: string | null;
   owns?: string[];
+  canManage?: boolean;
+  readOnly?: boolean;
+  scratchDir?: string | null;
   channels: string[];
   readonly brief: string | null;
   readonly createdAt: string;
@@ -157,6 +160,9 @@ export function memberByName(swarm: StoredSwarm, name: string): StoredMember | u
 }
 
 export const isLive = (member: StoredMember): boolean => member.killedAt === null;
+
+export const canManageSwarm = (member: StoredMember): boolean =>
+  member.role === "coordinator" || member.canManage === true;
 
 /** `fix` names the group `fix-1`..`fix-k`; a member's own name always matches. */
 export function membersNamed(swarm: StoredSwarm, name: string): StoredMember[] {

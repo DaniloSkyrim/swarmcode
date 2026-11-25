@@ -65,6 +65,8 @@ export const layer = McpToolAccess.toLayer(SwarmToolkit, {
                 workspace: input.workspace,
                 channels: input.channels,
                 owns: input.owns,
+                readOnly: input.readOnly,
+                manager: input.manager,
               }),
             };
           }
@@ -101,6 +103,13 @@ export const layer = McpToolAccess.toLayer(SwarmToolkit, {
                 goal: input.goal,
                 tasks,
                 threads: input.threads,
+                mode: input.mode,
+                integrityMode: input.integrityMode,
+                projectDir: input.projectDir,
+                artifacts: input.artifacts,
+                milestones: input.milestones,
+                rounds: input.rounds,
+                finalAudit: input.finalAudit,
               }),
             };
           }

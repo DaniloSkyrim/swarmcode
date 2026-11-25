@@ -2,6 +2,7 @@ import type { AgySwarmMember, AgySwarmPost, AgySwarmSnapshot } from "@t3tools/co
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boostRoundProgress,
   filterPosts,
   firstUnreadSeq,
   formatTokenCount,
@@ -13,6 +14,9 @@ import {
   memberCue,
   memberSnippet,
   mergePosts,
+  milestoneProgress,
+  needsInputMembers,
+  nextNeedsInputMember,
   NO_POST_FILTER,
   parseDelimitedList,
   postBody,
@@ -235,5 +239,48 @@ describe("swarm board logic", () => {
       "apps/web/src/",
       "apps/server/src/",
     ]);
+  });
+
+  it("cycles through members needing input and summarizes milestones and boost rounds", () => {
+    const waiting = [
+      member("coordinator", { state: "waiting" }),
+      member("worker-a", { state: "needs-input" }),
+      member("worker-b", { state: "needs-input" }),
+      member("worker-c", { state: "working" }),
+    ];
+    expect(needsInputMembers(waiting).map((entry) => entry.name)).toEqual(["worker-a", "worker-b"]);
+    expect(nextNeedsInputMember(waiting, "thread-coordinator")?.name).toBe("worker-a");
+    expect(nextNeedsInputMember(waiting, "thread-worker-a")?.name).toBe("worker-b");
+    expect(nextNeedsInputMember(waiting, "thread-worker-b")?.name).toBe("worker-a");
+    expect(
+      nextNeedsInputMember([member("only", { state: "needs-input" })], "thread-only"),
+    ).toBeNull();
+
+    expect(
+      milestoneProgress({
+        goal: { title: "Ship v2", line: "All milestones" },
+        threads: [],
+        tasks: {},
+        milestones: [
+          { id: "m1", title: "Core", status: "passed" },
+          { id: "m2", title: "Audit", status: "verifying" },
+          { id: "m3", title: "Release", status: "blocked" },
+        ],
+      }),
+    ).toEqual({ passed: 1, blocked: 1, total: 3 });
+    expect(milestoneProgress(null)).toBeNull();
+
+    expect(
+      boostRoundProgress({
+        goal: { title: "Boost", line: "Challenge rounds" },
+        threads: [],
+        tasks: {},
+        rounds: [
+          { round: 0, status: "fixed", worker: "deep-coder" },
+          { round: 1, status: "clean", worker: "verifier" },
+          { round: 2, status: "running", worker: "challenger" },
+        ],
+      }),
+    ).toEqual({ total: 3, fixed: 1, clean: 1, running: 1 });
   });
 });

@@ -277,7 +277,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
-import { openSwarmSurface } from "./swarm/openSwarmSurface";
+import { jumpToNextNeedsInputMember, openSwarmSurface } from "./swarm/openSwarmSurface";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
@@ -1582,6 +1582,22 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "swarm.toggle",
       run: async () => {
         openSwarmSurface(threadRef);
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:swarm-jump-needs-input",
+      searchTerms: ["swarm", "boost", "teamwork", "needs input", "jump", "approval", "member"],
+      title: gt("Jump to swarm member needing input"),
+      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "swarm.jumpNeedsInput",
+      run: async () => {
+        jumpToNextNeedsInputMember(threadRef, (target) => {
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(target),
+          });
+        });
       },
     });
   }

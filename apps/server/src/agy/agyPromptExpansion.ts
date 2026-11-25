@@ -3,6 +3,7 @@
 import {
   AGY_BOARD_COMMANDS,
   type AgyPromptCommand,
+  type AgySwarmKind,
   parseAgyPromptCommands,
 } from "@t3tools/contracts";
 
@@ -16,7 +17,7 @@ import {
   RUN_WORKFLOW_PROMPT,
   SCHEDULE_PROMPT,
   SWARM_COORDINATOR_PROMPT,
-  SWARM_COORDINATOR_REMINDER,
+  swarmCoordinatorReminder,
   TEAMWORK_PROMPT,
 } from "./agyPrompts.ts";
 
@@ -30,9 +31,9 @@ const NATIVE_COMMANDS: Readonly<Record<string, ReadonlyArray<AgyPromptCommand>>>
 const INSTRUCTIONS: Record<AgyPromptCommand, ReadonlyArray<string>> = {
   plan: [PLAN_PROMPT],
   "grill-me": [GRILL_ME_PROMPT],
-  boost: [SWARM_COORDINATOR_PROMPT, BOOST_PROMPT],
+  boost: [BOOST_PROMPT],
   swarm: [SWARM_COORDINATOR_PROMPT],
-  teamwork: [SWARM_COORDINATOR_PROMPT, TEAMWORK_PROMPT],
+  teamwork: [TEAMWORK_PROMPT],
   goal: [GOAL_PROMPT],
   learn: [LEARN_PROMPT],
   browser: [BROWSER_PROMPT],
@@ -46,6 +47,18 @@ export interface AgyExpansionSession {
   readonly nativeGoals: boolean;
   /** The thread currently coordinates an active swarm with at least one live worker. */
   readonly activeSwarmCoordinator?: boolean | undefined;
+  /** Kind of the active swarm coordinated by this thread, if any. */
+  readonly activeSwarmKind?: AgySwarmKind | undefined;
+}
+
+/** Leading board command kind (`/teamwork`, `/boost`, `/swarm`) in a user message, if any. */
+export function detectAgyBoardCommandKind(text: string): AgySwarmKind | null {
+  const parsed = parseAgyPromptCommands(text);
+  if (parsed === null) return null;
+  if (parsed.commands.includes("teamwork")) return "teamwork";
+  if (parsed.commands.includes("boost")) return "boost";
+  if (parsed.commands.includes("swarm")) return "swarm";
+  return null;
 }
 
 export function expandAgyCommandText(text: string, session: AgyExpansionSession): string | null {
@@ -54,7 +67,7 @@ export function expandAgyCommandText(text: string, session: AgyExpansionSession)
     if (session.activeSwarmCoordinator !== true) return null;
     const trimmed = text.trimStart();
     if (trimmed.startsWith("/") || trimmed.startsWith("[swarm]")) return null;
-    return `${SWARM_COORDINATOR_REMINDER}\n\n${text}`;
+    return `${swarmCoordinatorReminder(session.activeSwarmKind ?? "swarm")}\n\n${text}`;
   }
   const nativeDriver = NATIVE_DRIVERS.has(session.driver);
   const nativeForDriver = NATIVE_COMMANDS[session.driver] ?? [];

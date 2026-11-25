@@ -9,6 +9,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sideThreadOpenIntentOf } from "@t3tools/client-runtime/side-thread";
 import {
+  FileTextIcon,
   FolderIcon,
   GitBranchIcon,
   PlayIcon,
@@ -33,6 +34,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Empty, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -59,7 +61,7 @@ function MemberMetaRow(props: { member: AgySwarmMember }) {
   const owns = member.owns ?? [];
   const metrics = member.metrics;
   const hasMetrics = metrics !== undefined && (metrics.turns > 0 || metrics.totalTokens > 0);
-  if (!branchLabel && owns.length === 0 && !hasMetrics) return null;
+  if (!branchLabel && owns.length === 0 && !hasMetrics && !member.scratchDir) return null;
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-muted-foreground/85">
       {branchLabel ? (
@@ -123,6 +125,17 @@ function MemberMetaRow(props: { member: AgySwarmMember }) {
                 </span>
               ) : null}
             </div>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {member.scratchDir ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex shrink-0 items-center gap-1" />}>
+            <FileTextIcon aria-hidden className="size-3 shrink-0" />
+            <T>scratch</T>
+          </TooltipTrigger>
+          <TooltipPopup>
+            <span className="font-mono text-xs">{member.scratchDir}</span>
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -212,6 +225,16 @@ function MemberRow(props: {
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2 text-sm">
           <span className="min-w-0 truncate font-medium text-foreground">{member.name}</span>
+          {member.canManage && member.role !== "coordinator" ? (
+            <Badge variant="info" size="sm">
+              <T>Manager</T>
+            </Badge>
+          ) : null}
+          {member.readOnly ? (
+            <Badge variant="secondary" size="sm">
+              <T>Read-only</T>
+            </Badge>
+          ) : null}
           <span
             className={cn(
               "flex shrink-0 items-center gap-1 text-xs",

@@ -70,8 +70,12 @@ import {
   isSlashCommandMessage,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
-import { expandAgyMessage } from "../agy/agyPromptExpansion.ts";
-import { isActiveSwarmCoordinator } from "../agy/swarm/AgySwarm.ts";
+import { detectAgyBoardCommandKind, expandAgyMessage } from "../agy/agyPromptExpansion.ts";
+import {
+  activeSwarmKind,
+  isActiveSwarmCoordinator,
+  rememberPendingSwarmKind,
+} from "../agy/swarm/AgySwarm.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1192,6 +1196,10 @@ export const layer: Layer.Layer<
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       // Fork: Antigravity-style commands the provider lacks become instructions.
+      const pendingBoardKind = detectAgyBoardCommandKind(providerMessage.text);
+      if (pendingBoardKind !== null) {
+        rememberPendingSwarmKind(serverConfig.stateDir, projection.thread.id, pendingBoardKind);
+      }
       const turnMessage = expandAgyMessage(providerMessage, {
         driver: session.driver,
         nativeGoals: goalDriver,
@@ -1199,6 +1207,7 @@ export const layer: Layer.Layer<
           serverConfig.stateDir,
           projection.thread.id,
         ),
+        activeSwarmKind: activeSwarmKind(serverConfig.stateDir, projection.thread.id),
       });
       const messageText = withMessageSenderNote(
         turnMessage,

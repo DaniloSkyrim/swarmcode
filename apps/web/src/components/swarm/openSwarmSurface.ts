@@ -1,7 +1,13 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 
+import { openSideThread } from "~/lib/sideChatPane";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { agySwarmEnvironment } from "~/state/agySwarm";
+import { nextNeedsInputMember } from "./swarmBoard.logic";
 
 const AUTO_OPENED_KEY = "t3code:swarm-auto-opened:v1";
 const AUTO_OPENED_LIMIT = 200;
@@ -38,4 +44,33 @@ export function markSwarmAutoOpened(threadRef: ScopedThreadRef): void {
 export function openSwarmSurface(threadRef: ScopedThreadRef): void {
   markSwarmAutoOpened(threadRef);
   useRightPanelStore.getState().open(threadRef, "swarm");
+}
+
+/**
+ * Jumps directly to the next swarm member awaiting user input; if none is cached or waiting,
+ * opens the swarm board instead so the user can inspect member states.
+ */
+export function jumpToNextNeedsInputMember(
+  threadRef: ScopedThreadRef,
+  navigate: (target: ScopedThreadRef) => void,
+): boolean {
+  const result = appAtomRegistry.get(
+    agySwarmEnvironment.swarm({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId },
+    }),
+  );
+  const swarm = Option.getOrUndefined(AsyncResult.value(result)) ?? null;
+  const target = swarm ? nextNeedsInputMember(swarm.members, threadRef.threadId) : null;
+  if (target === null) {
+    openSwarmSurface(threadRef);
+    return false;
+  }
+  openSideThread({
+    threadRef: scopeThreadRef(threadRef.environmentId, target.threadId),
+    panelRef: threadRef,
+    intent: "primary",
+    navigate,
+  });
+  return true;
 }

@@ -854,14 +854,17 @@ it.live(
           ),
         } as unknown as ThreadManagementService.ThreadManagementService["Service"];
 
+        const launchedPrompts: string[] = [];
         const launches = {
           launch: (input: {
             readonly threadId: ThreadId;
             readonly title: string;
             readonly workspaceStrategy: { readonly type: string };
             readonly modelSelection: ModelSelection;
+            readonly initialMessage?: { readonly text: string };
           }) =>
             Effect.sync(() => {
+              if (input.initialMessage?.text) launchedPrompts.push(input.initialMessage.text);
               const isWt = input.workspaceStrategy.type === "worktree";
               const worktreePath = isWt ? `/repo-wt/${input.threadId}` : null;
               const branch = isWt ? `swarm/${input.threadId}` : null;
@@ -1167,6 +1170,109 @@ it.live(
         assert.strictEqual(editorMetrics?.totalTokens, 220);
         assert.strictEqual(snapWithMetrics?.metrics?.totalTokens, 220);
         assert.strictEqual(snapWithMetrics?.metrics?.turns, 1);
+
+        // 7. Teamwork & Boost upgrades: kind tracking, readOnly, scratchDir, delegated manager, rich plan.
+        assert.strictEqual(AgySwarm.activeSwarmKind(stateDir, coordinatorId), "swarm");
+        yield* swarm.setTitle(coordinatorId, "Teamwork Upgrade", "teamwork");
+        assert.strictEqual(AgySwarm.activeSwarmKind(stateDir, coordinatorId), "teamwork");
+
+        const readOnlyWtErr = yield* swarm
+          .add(coordinatorId, {
+            name: "bad-ro",
+            brief: "invalid combo",
+            readOnly: true,
+            workspace: "worktree",
+          })
+          .pipe(Effect.flip);
+        assert.include(readOnlyWtErr.reason, "Read-only worker");
+
+        yield* swarm.add(coordinatorId, {
+          name: "auditor",
+          brief: "Inspect everything read-only",
+          readOnly: true,
+        });
+        const auditorMsg = launchedPrompts.at(-1) ?? "";
+        assert.include(auditorMsg, "<read_only_worker>");
+        assert.include(auditorMsg, "Scratch directory:");
+
+        // Ordinary worker cannot manage swarm, create channels, set plan, or grant manager:true.
+        const workerMgrErr = yield* swarm
+          .add(editorAId, { name: "rogue-mgr", brief: "escalate", manager: true })
+          .pipe(Effect.flip);
+        assert.include(workerMgrErr.reason, "delegated manager");
+        const workerPlanErr = yield* swarm
+          .setPlan(editorAId, { goal: { title: "Unauthorized", line: "Should be rejected" } })
+          .pipe(Effect.flip);
+        assert.include(workerPlanErr.reason, "delegated manager");
+        const workerChanErr = yield* swarm
+          .channel(editorAId, { op: "create", channel: "rogue" })
+          .pipe(Effect.flip);
+        assert.include(workerChanErr.reason, "delegated manager");
+
+        // Delegated manager can set rich plan, manage channels, spawn successor manager, and kill workers (not coordinator).
+        yield* swarm.add(coordinatorId, {
+          name: "orchestrator",
+          brief: "Drive milestones",
+          manager: true,
+        });
+        assert.include(launchedPrompts.at(-1) ?? "", "<swarm_manager>");
+
+        const snapBeforeMgr = yield* swarm.snapshot(coordinatorId);
+        const auditorMember = snapBeforeMgr!.members.find((m) => m.name === "auditor")!;
+        const orchestratorMember = snapBeforeMgr!.members.find((m) => m.name === "orchestrator")!;
+        assert.isTrue(auditorMember.readOnly);
+        assert.isTrue(orchestratorMember.canManage);
+        assert.isDefined(auditorMember.scratchDir);
+        assert.isTrue(yield* fs.exists(auditorMember.scratchDir!));
+
+        const orchestratorId = orchestratorMember.threadId;
+        yield* swarm.setPlan(orchestratorId, {
+          goal: { title: "Ship Teamwork v2", line: "3 review gates + final audit" },
+          mode: "general",
+          integrityMode: "development",
+          projectDir: "/repo",
+          artifacts: [{ label: "Plan", path: "/repo/plan.md" }],
+          milestones: [
+            {
+              id: "m1",
+              title: "Foundation",
+              status: "passed",
+              gates: { critic: "passed", challenger: "passed", auditor: "passed" },
+            },
+            {
+              id: "m2",
+              title: "Verification",
+              status: "verifying",
+              gates: { critic: "passed", challenger: "running", auditor: "pending" },
+            },
+          ],
+          rounds: [{ round: 0, status: "fixed", worker: "editor-a", summary: "Initial pass" }],
+          finalAudit: { status: "running", summary: "Auditing build" },
+        });
+        yield* swarm.channel(orchestratorId, { op: "create", channel: "milestone-2" });
+        yield* swarm.add(orchestratorId, {
+          name: "orchestrator-2",
+          brief: "Take over milestone 2",
+          manager: true,
+        });
+        const killCoordErr = yield* swarm.kill(orchestratorId, "coordinator").pipe(Effect.flip);
+        assert.include(killCoordErr.reason, "coordinator");
+        yield* swarm.kill(orchestratorId, "editor-b");
+
+        const snapAfterMgr = yield* swarm.snapshot(coordinatorId);
+        assert.strictEqual(snapAfterMgr?.plan?.integrityMode, "development");
+        assert.lengthOf(snapAfterMgr?.plan?.milestones ?? [], 2);
+        assert.lengthOf(snapAfterMgr?.plan?.rounds ?? [], 1);
+        assert.strictEqual(snapAfterMgr?.plan?.finalAudit?.status, "running");
+        assert.isTrue(
+          snapAfterMgr?.members.find((m) => m.name === "orchestrator-2")?.canManage === true,
+        );
+
+        const statusText = yield* swarm.status(coordinatorId);
+        assert.include(statusText, "(teamwork)");
+        assert.include(statusText, "worker, manager,");
+        assert.include(statusText, "worker, read-only,");
+        assert.include(statusText, "milestones=1/2");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

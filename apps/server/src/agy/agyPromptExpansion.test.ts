@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { expandAgyCommandText } from "./agyPromptExpansion.ts";
+import { detectAgyBoardCommandKind, expandAgyCommandText } from "./agyPromptExpansion.ts";
 
 const claude = { driver: "claudeAgent", nativeGoals: true };
 const cursor = { driver: "cursor", nativeGoals: false };
@@ -14,10 +14,24 @@ it("stacked commands expand into their instructions, and the text no longer read
   assert.isFalse(text!.trimStart().startsWith("/"));
 });
 
-it("swarm-shaped commands carry the coordinator rules once", () => {
-  const text = expandAgyCommandText("/boost /swarm fix the flaky test", cursor) ?? "";
-  assert.strictEqual(text.split("<swarm_coordinator>").length - 1, 1);
-  assert.include(text, "<boost>");
+it("boost and teamwork are self-contained and do not stack swarm_coordinator unless /swarm is also passed", () => {
+  const boostOnly = expandAgyCommandText("/boost fix the flaky test", cursor) ?? "";
+  assert.include(boostOnly, "<boost>");
+  assert.notInclude(boostOnly, "<swarm_coordinator>");
+
+  const teamworkOnly = expandAgyCommandText("/teamwork build an app", cursor) ?? "";
+  assert.include(teamworkOnly, "<teamwork>");
+  assert.notInclude(teamworkOnly, "<swarm_coordinator>");
+
+  const stacked = expandAgyCommandText("/boost /swarm fix the flaky test", cursor) ?? "";
+  assert.strictEqual(stacked.split("<swarm_coordinator>").length - 1, 1);
+  assert.include(stacked, "<boost>");
+
+  assert.strictEqual(detectAgyBoardCommandKind("/boost investigate crash"), "boost");
+  assert.strictEqual(detectAgyBoardCommandKind("/plan /teamwork build v2"), "teamwork");
+  assert.strictEqual(detectAgyBoardCommandKind("/swarm ship it"), "swarm");
+  assert.isNull(detectAgyBoardCommandKind("/swarm board"));
+  assert.isNull(detectAgyBoardCommandKind("/plan design only"));
 });
 
 it("a provider's native command wins, except the board commands", () => {
@@ -79,4 +93,19 @@ it("active swarm coordinators receive a short reminder on plain messages, not on
   assert.isNull(
     expandAgyCommandText("[swarm] New on the board for you, coordinator:", activeAntigravity),
   );
+
+  // Kind-aware coordinator reminders tailor guidance for boost and teamwork boards.
+  const boostReminded = expandAgyCommandText("Check round 1", {
+    ...activeAntigravity,
+    activeSwarmKind: "boost",
+  });
+  assert.include(boostReminded ?? "", "/boost");
+  assert.include(boostReminded ?? "", "spot-checking");
+
+  const teamworkReminded = expandAgyCommandText("What is milestone 2 status?", {
+    ...activeAntigravity,
+    activeSwarmKind: "teamwork",
+  });
+  assert.include(teamworkReminded ?? "", "/teamwork");
+  assert.include(teamworkReminded ?? "", "Sentinel");
 });

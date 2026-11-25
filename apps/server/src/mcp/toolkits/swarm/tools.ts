@@ -23,6 +23,8 @@ const SwarmWorkerSpec = Schema.Struct({
   channels: Schema.optional(Schema.Array(Schema.String)),
   fork: Schema.optional(Schema.String),
   owns: Schema.optional(Schema.Array(Schema.String)),
+  readOnly: Schema.optional(Schema.Boolean),
+  manager: Schema.optional(Schema.Boolean),
 });
 
 const SwarmPlanTaskEntry = Schema.Struct({
@@ -35,9 +37,9 @@ const SwarmTool = Tool.make("t3_swarm", {
     "Run a swarm: named worker threads that coordinate on a shared message board the user watches live. " +
     "Always use this T3 Code MCP t3_swarm tool (never a provider's native swarm tool). Keep coordinator turns short: delegate exploration and edits to workers. " +
     "Actions: status (members and states), models (models and effort levels; pass all:true for legacy models too), add (start one worker with name+brief, a numbered pool with n or workerTasks, or a heterogeneous batch with workers:[{name,brief,...}]; " +
-    'optional model, reasoningEffort, fork from a member\'s conversation, workspace:"worktree" for an own copy, owns:[paths], channels), ' +
-    "kill (stop a worker for good and remove its worktree; refuses dirty worktrees unless force:true), model (switch a member's model/effort; omit name for yourself, pass resume:true to nudge an idle worker), title (name the swarm), " +
-    "plan (set/update the overview; goal is required on the first call, planTasks:[{worker,summary}], threads:[{id,title,goal,tasks}]; omitted fields keep current values), " +
+    'optional model, reasoningEffort, fork from a member\'s conversation, workspace:"worktree" for an own copy, owns:[paths], readOnly:true for explorers/auditors/critics, manager:true for delegated orchestrators, channels), ' +
+    "kill (stop a worker for good and remove its worktree; refuses dirty worktrees unless force:true), model (switch a member's model/effort; omit name for yourself, pass resume:true to nudge an idle worker), title (name the swarm and optional kind: swarm|boost|teamwork), " +
+    "plan (set/update the overview; goal is required on the first call, optional planTasks, threads, mode, integrityMode, projectDir, artifacts, milestones, rounds, finalAudit; omitted fields keep current values), " +
     "channel (op create|join|leave|archive|list). The thread that first calls it becomes the coordinator.",
   parameters: Schema.Struct({
     action: Schema.Literals([
@@ -85,6 +87,14 @@ const SwarmTool = Tool.make("t3_swarm", {
       description:
         "add: files or directories this worker owns (warns if two shared-workspace workers overlap).",
     }),
+    readOnly: Schema.optional(Schema.Boolean).annotate({
+      description:
+        "add: mark this worker read-only (for explorers, critics, auditors, and DeepInvestigator).",
+    }),
+    manager: Schema.optional(Schema.Boolean).annotate({
+      description:
+        "add: grant delegated swarm management privileges (plan, channels, worker kill, successor handoff); coordinator/manager only.",
+    }),
     force: Schema.optional(Schema.Boolean).annotate({
       description: "kill: discard uncommitted changes when removing a worker's own worktree.",
     }),
@@ -107,6 +117,29 @@ const SwarmTool = Tool.make("t3_swarm", {
     threads: Schema.optional(AgySwarmPlan.fields.threads).annotate({
       description:
         "plan: work groups [{id, title, goal, tasks:[worker...]}] (omit to keep current; pass [] to clear).",
+    }),
+    mode: Schema.optional(AgySwarmPlan.fields.mode).annotate({
+      description:
+        'plan: execution mode ("deep-coder", "deep-investigator", "general", "iterative", "document-review", "math-proof", "math-large-team").',
+    }),
+    integrityMode: Schema.optional(AgySwarmPlan.fields.integrityMode).annotate({
+      description: 'plan: teamwork integrity mode ("development", "demo", "benchmark").',
+    }),
+    projectDir: Schema.optional(AgySwarmPlan.fields.projectDir).annotate({
+      description: "plan: working directory path for the project.",
+    }),
+    artifacts: Schema.optional(AgySwarmPlan.fields.artifacts).annotate({
+      description: "plan: canonical artifact links [{label, path}].",
+    }),
+    milestones: Schema.optional(AgySwarmPlan.fields.milestones).annotate({
+      description:
+        "plan: teamwork milestones [{id, title, status, summary?, gates?: {critic?, challenger?, auditor?}}].",
+    }),
+    rounds: Schema.optional(AgySwarmPlan.fields.rounds).annotate({
+      description: "plan: boost challenge rounds [{round, worker, status, summary?}].",
+    }),
+    finalAudit: Schema.optional(AgySwarmPlan.fields.finalAudit).annotate({
+      description: "plan: final success-audit / Phase 3 verification {status, summary?}.",
     }),
     op: Schema.optional(Schema.Literals(["create", "join", "leave", "archive", "list"])),
     channel: Schema.optional(Schema.String),

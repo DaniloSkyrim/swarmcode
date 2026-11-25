@@ -22,6 +22,12 @@ export function ThreadSwarmBar(props: {
 
   const live = swarm.members.filter((member) => member.state !== "killed");
   const working = live.filter((member) => member.state === "working").length;
+  const needsInput = live.filter((member) => member.state === "needs-input").length;
+  const milestones = swarm.plan?.milestones ?? [];
+  const passedMilestones = milestones.filter((milestone) => milestone.status === "passed").length;
+  const rounds = swarm.plan?.rounds ?? [];
+  const kindLabel =
+    swarm.kind === "boost" ? gt("Boost") : swarm.kind === "teamwork" ? gt("Teamwork") : null;
   const title = swarm.title.trim() === "" ? gt("Swarm board") : swarm.title;
 
   return (
@@ -46,12 +52,30 @@ export function ThreadSwarmBar(props: {
           size={14}
           tintColorClassName="accent-foreground-muted"
         />
+        {kindLabel ? (
+          <View className="shrink-0 rounded-md bg-screen px-1.5 py-0.5">
+            <Text className="text-[11px] font-t3-medium text-foreground-muted">{kindLabel}</Text>
+          </View>
+        ) : null}
         <Text numberOfLines={1} className="min-w-0 flex-1 text-xs font-t3-medium text-foreground">
           {title}
         </Text>
-        <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
-          {swarm.doneAt !== null ? (
+        <Text
+          className={cn(
+            "shrink-0 text-xs tabular-nums",
+            needsInput > 0 ? "font-t3-medium text-warning-foreground" : "text-foreground-muted",
+          )}
+        >
+          {needsInput > 0 ? (
+            gt("{count, plural, one {{count} needs input} other {{count} need input}}", {
+              count: needsInput,
+            })
+          ) : swarm.doneAt !== null ? (
             <T>Done</T>
+          ) : milestones.length > 0 ? (
+            `${passedMilestones}/${milestones.length}`
+          ) : rounds.length > 0 ? (
+            `R${rounds.length}`
           ) : working > 0 ? (
             <T>
               <Var>{working}</Var> working

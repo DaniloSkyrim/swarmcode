@@ -1,4 +1,9 @@
-import type { AgySwarmMember, AgySwarmPost, AgySwarmSnapshot } from "@t3tools/contracts";
+import type {
+  AgySwarmMember,
+  AgySwarmPlan,
+  AgySwarmPost,
+  AgySwarmSnapshot,
+} from "@t3tools/contracts";
 
 export const MAIN_CHANNEL = "main";
 const COORDINATOR = "coordinator";
@@ -395,4 +400,60 @@ export function parseDelimitedList(raw: string): string[] {
     items.push(trimmed);
   }
   return items;
+}
+
+export const needsInputMembers = (
+  members: ReadonlyArray<AgySwarmMember>,
+): ReadonlyArray<AgySwarmMember> => members.filter((member) => member.state === "needs-input");
+
+/** Next member awaiting user input after `currentThreadId`, wrapping cyclically. */
+export function nextNeedsInputMember(
+  members: ReadonlyArray<AgySwarmMember>,
+  currentThreadId: string,
+): AgySwarmMember | null {
+  const waiting = needsInputMembers(members);
+  if (waiting.length === 0) return null;
+  const currentIndex = waiting.findIndex((member) => member.threadId === currentThreadId);
+  if (currentIndex === -1) return waiting[0]!;
+  if (waiting.length === 1) return null;
+  return waiting[(currentIndex + 1) % waiting.length]!;
+}
+
+export interface MilestoneProgress {
+  readonly passed: number;
+  readonly blocked: number;
+  readonly total: number;
+}
+
+export function milestoneProgress(plan: AgySwarmPlan | null): MilestoneProgress | null {
+  const milestones = plan?.milestones;
+  if (!milestones || milestones.length === 0) return null;
+  let passed = 0;
+  let blocked = 0;
+  for (const milestone of milestones) {
+    if (milestone.status === "passed") passed += 1;
+    else if (milestone.status === "blocked") blocked += 1;
+  }
+  return { passed, blocked, total: milestones.length };
+}
+
+export interface BoostRoundProgress {
+  readonly total: number;
+  readonly fixed: number;
+  readonly clean: number;
+  readonly running: number;
+}
+
+export function boostRoundProgress(plan: AgySwarmPlan | null): BoostRoundProgress | null {
+  const rounds = plan?.rounds;
+  if (!rounds || rounds.length === 0) return null;
+  let fixed = 0;
+  let clean = 0;
+  let running = 0;
+  for (const round of rounds) {
+    if (round.status === "fixed") fixed += 1;
+    else if (round.status === "clean") clean += 1;
+    else if (round.status === "running") running += 1;
+  }
+  return { total: rounds.length, fixed, clean, running };
 }

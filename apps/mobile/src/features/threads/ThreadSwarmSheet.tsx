@@ -6,8 +6,12 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
+  AgySwarmBoostRoundStatus,
+  AgySwarmGateStatus,
+  AgySwarmIntegrityMode,
   AgySwarmMember,
   AgySwarmMemberState,
+  AgySwarmMilestoneStatus,
   AgySwarmPost,
   AgySwarmSnapshot,
   EnvironmentId,
@@ -48,6 +52,34 @@ const MEMBER_STATE_LABELS = {
   stopped: msg("Stopped", { $context: "swarm member state" }),
   killed: msg("Retired", { $context: "swarm member state" }),
 } as const satisfies Record<AgySwarmMemberState, string>;
+
+const INTEGRITY_LABELS = {
+  development: msg("Development", { $context: "teamwork integrity mode" }),
+  demo: msg("Demo", { $context: "teamwork integrity mode" }),
+  benchmark: msg("Benchmark", { $context: "teamwork integrity mode" }),
+} as const satisfies Record<AgySwarmIntegrityMode, string>;
+
+const MILESTONE_LABELS = {
+  pending: msg("Pending", { $context: "teamwork milestone status" }),
+  in_progress: msg("In progress", { $context: "teamwork milestone status" }),
+  verifying: msg("Verifying", { $context: "teamwork milestone status" }),
+  passed: msg("Passed", { $context: "teamwork milestone status" }),
+  blocked: msg("Blocked", { $context: "teamwork milestone status" }),
+} as const satisfies Record<AgySwarmMilestoneStatus, string>;
+
+const GATE_LABELS = {
+  pending: msg("pending", { $context: "milestone review gate status" }),
+  running: msg("running", { $context: "milestone review gate status" }),
+  passed: msg("passed", { $context: "milestone review gate status" }),
+  failed: msg("failed", { $context: "milestone review gate status" }),
+} as const satisfies Record<AgySwarmGateStatus, string>;
+
+const ROUND_LABELS = {
+  running: msg("Running", { $context: "boost round status" }),
+  fixed: msg("Fixed", { $context: "boost round status" }),
+  clean: msg("Clean", { $context: "boost round status" }),
+  blocked: msg("Blocked", { $context: "boost round status" }),
+} as const satisfies Record<AgySwarmBoostRoundStatus, string>;
 
 function formatTokens(tokens: number): string {
   if (tokens < 1_000) return String(Math.max(0, Math.round(tokens)));
@@ -136,12 +168,16 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
   const title = swarm?.title.trim() ? swarm.title : gt("Swarm");
   const subtitle = (() => {
     if (swarm === null) return undefined;
-    const status = swarm.doneAt !== null ? gt("Done") : gt("Live");
+    const parts: string[] = [];
+    if (swarm.kind === "boost") parts.push(gt("Boost"));
+    else if (swarm.kind === "teamwork") parts.push(gt("Teamwork"));
+    parts.push(swarm.doneAt !== null ? gt("Done") : gt("Live"));
     const metrics = swarm.metrics;
-    if (!metrics || (metrics.turns === 0 && metrics.totalTokens === 0)) return status;
-    return metrics.totalTokens > 0
-      ? `${status} · ${metrics.turns}t · ${formatTokens(metrics.totalTokens)}`
-      : `${status} · ${metrics.turns}t`;
+    if (metrics && (metrics.turns > 0 || metrics.totalTokens > 0)) {
+      parts.push(`${metrics.turns}t`);
+      if (metrics.totalTokens > 0) parts.push(formatTokens(metrics.totalTokens));
+    }
+    return parts.join(" · ");
   })();
 
   if (addingWorker && swarm !== null) {
@@ -164,6 +200,17 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
     );
   }
 
+  const overviewProgress = (() => {
+    const milestones = swarm?.plan?.milestones ?? [];
+    if (milestones.length > 0) {
+      const passed = milestones.filter((milestone) => milestone.status === "passed").length;
+      return ` (${passed}/${milestones.length})`;
+    }
+    const rounds = swarm?.plan?.rounds ?? [];
+    if (rounds.length > 0) return ` (${rounds.length})`;
+    return "";
+  })();
+
   const tabOptions: Array<{ readonly value: SwarmTab; readonly label: string }> = [
     {
       value: "board",
@@ -175,7 +222,9 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
         ? `${gt("Members")} (${swarm.members.filter((m) => m.state !== "killed").length})`
         : gt("Members"),
     },
-    ...(swarm?.plan ? [{ value: "overview" as const, label: gt("Overview") }] : []),
+    ...(swarm?.plan
+      ? [{ value: "overview" as const, label: `${gt("Overview")}${overviewProgress}` }]
+      : []),
   ];
   const activeTab: SwarmTab = tabOptions.some((option) => option.value === selectedTab)
     ? selectedTab
@@ -620,11 +669,32 @@ function MobileSwarmMembers(props: {
           onPress={() => props.onOpenMember(member)}
           className="min-w-0 flex-1 gap-1 active:opacity-70"
         >
-          <View className="flex-row items-center gap-2">
+          <View className="flex-row flex-wrap items-center gap-1.5">
             <Text numberOfLines={1} className="shrink text-sm font-t3-bold text-foreground">
               @{member.name}
             </Text>
-            <Text className="shrink-0 text-xs text-foreground-muted">
+            {member.canManage && member.role !== "coordinator" ? (
+              <View className="rounded-md bg-subtle px-1.5 py-0.5">
+                <Text className="text-[11px] font-t3-medium text-foreground">
+                  <T>Manager</T>
+                </Text>
+              </View>
+            ) : null}
+            {member.readOnly ? (
+              <View className="rounded-md bg-subtle px-1.5 py-0.5">
+                <Text className="text-[11px] font-t3-medium text-foreground-muted">
+                  <T>Read-only</T>
+                </Text>
+              </View>
+            ) : null}
+            <Text
+              className={cn(
+                "shrink-0 text-xs",
+                member.state === "needs-input"
+                  ? "font-t3-medium text-warning-foreground"
+                  : "text-foreground-muted",
+              )}
+            >
               {props.resolveStateLabel(member.state)}
             </Text>
             {isCurrent ? (
@@ -738,8 +808,13 @@ function MobileSwarmOverview(props: {
   readonly swarm: AgySwarmSnapshot;
   readonly tabHeader: React.ReactNode;
 }) {
+  const resolve = useMessages();
   const insets = useSafeAreaInsets();
   const plan = props.swarm.plan;
+  const milestones = plan?.milestones ?? [];
+  const rounds = plan?.rounds ?? [];
+  const artifacts = plan?.artifacts ?? [];
+  const passedMilestones = milestones.filter((milestone) => milestone.status === "passed").length;
   return (
     <ScrollView
       nestedScrollEnabled
@@ -751,12 +826,135 @@ function MobileSwarmOverview(props: {
       {props.tabHeader}
       {plan === null ? null : (
         <>
-          <View className="gap-1 rounded-2xl bg-subtle px-4 py-3">
-            <Text className="text-sm font-t3-bold text-foreground">{plan.goal.title}</Text>
+          <View className="gap-1.5 rounded-2xl bg-subtle px-4 py-3">
+            <View className="flex-row flex-wrap items-center gap-1.5">
+              <Text className="text-sm font-t3-bold text-foreground">{plan.goal.title}</Text>
+              {plan.mode ? (
+                <View className="rounded-md bg-screen px-1.5 py-0.5">
+                  <Text className="text-[11px] font-t3-medium text-foreground-muted">
+                    {plan.mode}
+                  </Text>
+                </View>
+              ) : null}
+              {plan.integrityMode ? (
+                <View className="rounded-md bg-screen px-1.5 py-0.5">
+                  <Text className="text-[11px] font-t3-medium text-foreground">
+                    {resolve(INTEGRITY_LABELS[plan.integrityMode])}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             {plan.goal.line ? (
               <Text className="text-xs text-foreground-muted">{plan.goal.line}</Text>
             ) : null}
+            {plan.projectDir ? (
+              <Text numberOfLines={1} className="font-mono text-xs text-foreground-muted">
+                {plan.projectDir}
+              </Text>
+            ) : null}
           </View>
+
+          {milestones.length > 0 ? (
+            <View className="gap-2">
+              <View className="flex-row items-center justify-between px-1">
+                <Text className="text-xs font-t3-medium text-foreground-muted">
+                  <T>Milestones</T>
+                </Text>
+                <Text className="font-mono text-xs tabular-nums text-foreground-muted">
+                  {passedMilestones}/{milestones.length}
+                </Text>
+              </View>
+              {milestones.map((milestone) => (
+                <View key={milestone.id} className="gap-1.5 rounded-2xl bg-subtle/60 px-4 py-3">
+                  <View className="flex-row items-center justify-between gap-2">
+                    <Text className="min-w-0 flex-1 text-sm font-t3-medium text-foreground">
+                      {milestone.title}
+                    </Text>
+                    <Text className="shrink-0 text-xs font-t3-medium text-foreground-muted">
+                      {resolve(MILESTONE_LABELS[milestone.status])}
+                    </Text>
+                  </View>
+                  {milestone.summary ? (
+                    <Text className="text-xs text-foreground-muted">{milestone.summary}</Text>
+                  ) : null}
+                  {milestone.gates ? (
+                    <Text className="text-xs text-foreground-muted">
+                      <T>
+                        Critic:{" "}
+                        <Var>{resolve(GATE_LABELS[milestone.gates.critic ?? "pending"])}</Var> ·
+                        Challenger:{" "}
+                        <Var>{resolve(GATE_LABELS[milestone.gates.challenger ?? "pending"])}</Var> ·
+                        Auditor:{" "}
+                        <Var>{resolve(GATE_LABELS[milestone.gates.auditor ?? "pending"])}</Var>
+                      </T>
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {rounds.length > 0 ? (
+            <View className="gap-2">
+              <View className="flex-row items-center justify-between px-1">
+                <Text className="text-xs font-t3-medium text-foreground-muted">
+                  <T>Boost rounds</T>
+                </Text>
+                <Text className="font-mono text-xs tabular-nums text-foreground-muted">
+                  {rounds.length}
+                </Text>
+              </View>
+              {rounds.map((entry) => (
+                <View key={entry.round} className="gap-1 rounded-2xl bg-subtle/60 px-4 py-2.5">
+                  <View className="flex-row items-center justify-between gap-2">
+                    <Text className="font-mono text-xs font-t3-medium text-foreground">
+                      R{entry.round}
+                      {entry.worker ? ` · @${entry.worker}` : ""}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted">
+                      {resolve(ROUND_LABELS[entry.status])}
+                    </Text>
+                  </View>
+                  {entry.summary ? (
+                    <Text className="text-xs text-foreground-muted">{entry.summary}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {plan.finalAudit ? (
+            <View className="gap-1 rounded-2xl bg-subtle/60 px-4 py-3">
+              <View className="flex-row items-center justify-between gap-2">
+                <Text className="text-sm font-t3-medium text-foreground">
+                  <T>Final audit</T>
+                </Text>
+                <Text className="text-xs font-t3-medium text-foreground-muted">
+                  {resolve(GATE_LABELS[plan.finalAudit.status])}
+                </Text>
+              </View>
+              {plan.finalAudit.summary ? (
+                <Text className="text-xs text-foreground-muted">{plan.finalAudit.summary}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {artifacts.length > 0 ? (
+            <View className="gap-1.5 rounded-2xl bg-subtle/60 px-4 py-3">
+              <Text className="text-xs font-t3-medium text-foreground-muted">
+                <T>Artifacts</T>
+              </Text>
+              {artifacts.map((artifact) => (
+                <View key={`${artifact.label}:${artifact.path}`} className="gap-0.5">
+                  <Text className="text-xs font-t3-medium text-foreground">{artifact.label}</Text>
+                  <Text selectable className="font-mono text-xs text-foreground-muted">
+                    {artifact.path}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
           {plan.threads.map((group) => (
             <View key={group.id} className="gap-1.5 rounded-2xl bg-subtle/60 px-4 py-3">
               <Text className="text-sm font-t3-medium text-foreground">{group.title}</Text>
@@ -787,6 +985,8 @@ function AddWorkerForm(props: {
   const [name, setName] = useState("");
   const [brief, setBrief] = useState("");
   const [workspace, setWorkspace] = useState<"inherit" | "worktree">("inherit");
+  const [readOnly, setReadOnly] = useState(false);
+  const [manager, setManager] = useState(false);
   const [model, setModel] = useState("");
   const [ownsRaw, setOwnsRaw] = useState("");
   const [pending, setPending] = useState(false);
@@ -815,7 +1015,9 @@ function AddWorkerForm(props: {
         threadId: props.target.threadId,
         name: normalizedName,
         brief: brief.trim(),
-        workspace,
+        workspace: readOnly ? "inherit" : workspace,
+        ...(readOnly ? { readOnly: true } : {}),
+        ...(manager ? { manager: true } : {}),
         ...(trimmedModel ? { model: trimmedModel } : {}),
         ...(owns.length > 0 ? { owns } : {}),
       },
@@ -882,13 +1084,42 @@ function AddWorkerForm(props: {
           </Text>
           <SegmentedControl
             size="compact"
-            selected={workspace}
-            onSelect={setWorkspace}
+            selected={readOnly ? "inherit" : workspace}
+            onSelect={(next) => {
+              if (!readOnly) setWorkspace(next);
+            }}
             options={[
               { value: "inherit", label: gt("Shared") },
               { value: "worktree", label: gt("Isolated worktree") },
             ]}
           />
+        </View>
+        <View className="gap-1.5">
+          <Text className="text-xs font-t3-medium text-foreground-muted">
+            <T>Role options</T>
+          </Text>
+          <View className="flex-row flex-wrap gap-2">
+            <Chip
+              size="small"
+              label={gt("Read-only")}
+              selected={readOnly}
+              disabled={pending}
+              onPress={() => {
+                setReadOnly((current) => {
+                  const next = !current;
+                  if (next) setWorkspace("inherit");
+                  return next;
+                });
+              }}
+            />
+            <Chip
+              size="small"
+              label={gt("Delegated manager")}
+              selected={manager}
+              disabled={pending}
+              onPress={() => setManager((current) => !current)}
+            />
+          </View>
         </View>
         <View className="gap-1.5">
           <Text className="text-xs font-t3-medium text-foreground-muted">

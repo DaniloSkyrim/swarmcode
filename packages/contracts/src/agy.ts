@@ -50,6 +50,9 @@ export const AgySwarmMember = Schema.Struct({
   worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
   branch: Schema.optional(Schema.NullOr(Schema.String)),
   owns: Schema.optional(Schema.Array(Schema.String)),
+  canManage: Schema.optional(Schema.Boolean),
+  readOnly: Schema.optional(Schema.Boolean),
+  scratchDir: Schema.optional(Schema.NullOr(Schema.String)),
   channels: Schema.Array(Schema.String),
   brief: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
@@ -84,6 +87,60 @@ export const AgySwarmChannel = Schema.Struct({
 });
 export type AgySwarmChannel = typeof AgySwarmChannel.Type;
 
+export const AgySwarmGateStatus = Schema.Literals(["pending", "running", "passed", "failed"]);
+export type AgySwarmGateStatus = typeof AgySwarmGateStatus.Type;
+
+export const AgySwarmIntegrityMode = Schema.Literals(["development", "demo", "benchmark"]);
+export type AgySwarmIntegrityMode = typeof AgySwarmIntegrityMode.Type;
+
+export const AgySwarmMilestoneStatus = Schema.Literals([
+  "pending",
+  "in_progress",
+  "verifying",
+  "passed",
+  "blocked",
+]);
+export type AgySwarmMilestoneStatus = typeof AgySwarmMilestoneStatus.Type;
+
+export const AgySwarmMilestoneGates = Schema.Struct({
+  critic: Schema.optional(AgySwarmGateStatus),
+  challenger: Schema.optional(AgySwarmGateStatus),
+  auditor: Schema.optional(AgySwarmGateStatus),
+});
+export type AgySwarmMilestoneGates = typeof AgySwarmMilestoneGates.Type;
+
+export const AgySwarmMilestone = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  status: AgySwarmMilestoneStatus,
+  summary: Schema.optional(Schema.String),
+  gates: Schema.optional(AgySwarmMilestoneGates),
+});
+export type AgySwarmMilestone = typeof AgySwarmMilestone.Type;
+
+export const AgySwarmBoostRoundStatus = Schema.Literals(["running", "fixed", "clean", "blocked"]);
+export type AgySwarmBoostRoundStatus = typeof AgySwarmBoostRoundStatus.Type;
+
+export const AgySwarmBoostRound = Schema.Struct({
+  round: NonNegativeInt,
+  worker: Schema.String,
+  status: AgySwarmBoostRoundStatus,
+  summary: Schema.optional(Schema.String),
+});
+export type AgySwarmBoostRound = typeof AgySwarmBoostRound.Type;
+
+export const AgySwarmArtifactRef = Schema.Struct({
+  label: Schema.String,
+  path: Schema.String,
+});
+export type AgySwarmArtifactRef = typeof AgySwarmArtifactRef.Type;
+
+export const AgySwarmFinalAudit = Schema.Struct({
+  status: AgySwarmGateStatus,
+  summary: Schema.optional(Schema.String),
+});
+export type AgySwarmFinalAudit = typeof AgySwarmFinalAudit.Type;
+
 export const AgySwarmPlan = Schema.Struct({
   goal: Schema.Struct({ title: Schema.String, line: Schema.String }),
   tasks: Schema.Record(Schema.String, Schema.String),
@@ -95,6 +152,13 @@ export const AgySwarmPlan = Schema.Struct({
       tasks: Schema.Array(Schema.String),
     }),
   ),
+  mode: Schema.optional(Schema.String),
+  integrityMode: Schema.optional(AgySwarmIntegrityMode),
+  projectDir: Schema.optional(Schema.String),
+  artifacts: Schema.optional(Schema.Array(AgySwarmArtifactRef)),
+  milestones: Schema.optional(Schema.Array(AgySwarmMilestone)),
+  rounds: Schema.optional(Schema.Array(AgySwarmBoostRound)),
+  finalAudit: Schema.optional(AgySwarmFinalAudit),
 });
 export type AgySwarmPlan = typeof AgySwarmPlan.Type;
 
@@ -170,6 +234,8 @@ export const AgySwarmAddInput = Schema.Struct({
   workspace: Schema.optional(Schema.Literals(["inherit", "worktree"])),
   channels: Schema.optional(Schema.Array(Schema.String)),
   owns: Schema.optional(Schema.Array(Schema.String)),
+  readOnly: Schema.optional(Schema.Boolean),
+  manager: Schema.optional(Schema.Boolean),
 });
 export type AgySwarmAddInput = typeof AgySwarmAddInput.Type;
 

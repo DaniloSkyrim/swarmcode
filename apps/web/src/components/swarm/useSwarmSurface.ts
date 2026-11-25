@@ -1,10 +1,17 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useAgySwarm } from "~/state/agySwarm";
-import { markSwarmAutoOpened, openSwarmSurface, swarmAutoOpened } from "./openSwarmSurface";
+import { buildThreadRouteParams } from "~/threadRoutes";
+import {
+  jumpToNextNeedsInputMember,
+  markSwarmAutoOpened,
+  openSwarmSurface,
+  swarmAutoOpened,
+} from "./openSwarmSurface";
 
 /**
  * The swarm board's entry points for a thread's chat view: the tab action, the toggle shortcut,
@@ -33,6 +40,7 @@ export function useSwarmSurface(
     );
   }, [inSwarm, watchRef]);
 
+  const navigate = useNavigate();
   const addSwarmSurface = useStableCallback(() => {
     if (threadRef) openSwarmSurface(threadRef);
   });
@@ -41,10 +49,19 @@ export function useSwarmSurface(
     markSwarmAutoOpened(threadRef);
     useRightPanelStore.getState().toggle(threadRef, "swarm");
   });
+  const jumpNeedsInput = useStableCallback(() => {
+    if (!threadRef || !enabled) return false;
+    jumpToNextNeedsInputMember(threadRef, (target) => {
+      void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(target) });
+    });
+  });
 
   return {
     swarmAvailable: enabled && threadRef !== null,
     addSwarmSurface,
-    shortcuts: { "swarm.toggle": toggleSwarmSurface },
+    shortcuts: {
+      "swarm.toggle": toggleSwarmSurface,
+      "swarm.jumpNeedsInput": jumpNeedsInput,
+    },
   };
 }

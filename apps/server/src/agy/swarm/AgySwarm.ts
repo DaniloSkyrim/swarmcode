@@ -64,6 +64,8 @@ export interface AddWorkerSpec {
   readonly workspace?: "inherit" | "worktree" | undefined;
   readonly channels?: ReadonlyArray<string> | undefined;
   readonly owns?: ReadonlyArray<string> | undefined;
+  readonly readOnly?: boolean | undefined;
+  readonly manager?: boolean | undefined;
 }
 
 export type AddInput =
@@ -78,6 +80,8 @@ export type AddInput =
       readonly workspace?: "inherit" | "worktree" | undefined;
       readonly channels?: ReadonlyArray<string> | undefined;
       readonly owns?: ReadonlyArray<string> | undefined;
+      readonly readOnly?: boolean | undefined;
+      readonly manager?: boolean | undefined;
       readonly workers?: undefined;
     }
   | {
@@ -102,6 +106,13 @@ export interface PlanUpdateInput {
   readonly goal?: AgySwarmPlan["goal"] | undefined;
   readonly tasks?: AgySwarmPlan["tasks"] | undefined;
   readonly threads?: AgySwarmPlan["threads"] | undefined;
+  readonly mode?: AgySwarmPlan["mode"] | undefined;
+  readonly integrityMode?: AgySwarmPlan["integrityMode"] | undefined;
+  readonly projectDir?: AgySwarmPlan["projectDir"] | undefined;
+  readonly artifacts?: AgySwarmPlan["artifacts"] | undefined;
+  readonly milestones?: AgySwarmPlan["milestones"] | undefined;
+  readonly rounds?: AgySwarmPlan["rounds"] | undefined;
+  readonly finalAudit?: AgySwarmPlan["finalAudit"] | undefined;
 }
 
 export interface AgySwarmShape {
@@ -202,11 +213,42 @@ export interface AgySwarmShape {
 export class AgySwarm extends Context.Service<AgySwarm, AgySwarmShape>()("t3/agy/swarm/AgySwarm") {}
 
 // Keyed by stateDir so ProviderTurnStartService can read coordinator state without a layer cycle.
-const activeCoordinatorsByStateDir = new Map<string, Set<string>>();
+const activeCoordinatorsByStateDir = new Map<string, Map<string, AgySwarmKind>>();
+const pendingSwarmKindByStateDir = new Map<string, Map<string, AgySwarmKind>>();
+const MAX_PENDING_KIND_ENTRIES = 512;
 
 /** Whether `threadId` currently coordinates an open swarm with at least one live worker. */
 export const isActiveSwarmCoordinator = (stateDir: string, threadId: ThreadId): boolean =>
   activeCoordinatorsByStateDir.get(stateDir)?.has(threadId) === true;
+
+/** Kind of the active swarm coordinated by `threadId`, if any. */
+export const activeSwarmKind = (stateDir: string, threadId: ThreadId): AgySwarmKind | undefined =>
+  activeCoordinatorsByStateDir.get(stateDir)?.get(threadId);
+
+/** Remembers `/boost` or `/teamwork` on a thread so `ensureSwarm` sets the right kind even before `title`. */
+export const rememberPendingSwarmKind = (
+  stateDir: string,
+  threadId: ThreadId,
+  kind: AgySwarmKind,
+): void => {
+  let byThread = pendingSwarmKindByStateDir.get(stateDir);
+  if (byThread === undefined) {
+    byThread = new Map<string, AgySwarmKind>();
+    pendingSwarmKindByStateDir.set(stateDir, byThread);
+  }
+  byThread.set(threadId, kind);
+  if (byThread.size > MAX_PENDING_KIND_ENTRIES) {
+    const oldest = byThread.keys().next().value;
+    if (oldest !== undefined) byThread.delete(oldest);
+  }
+};
+
+const consumePendingSwarmKind = (stateDir: string, threadId: ThreadId): AgySwarmKind => {
+  const byThread = pendingSwarmKindByStateDir.get(stateDir);
+  const kind = byThread?.get(threadId);
+  if (kind !== undefined) byThread?.delete(threadId);
+  return kind ?? "swarm";
+};
 
 const MAX_WAIT_SECONDS = 45;
 const MONITOR_INTERVAL = Duration.seconds(60);
@@ -248,6 +290,9 @@ const fingerprint = (snapshot: AgySwarmSnapshot | null) =>
               member.worktreePath ?? "",
               member.branch ?? "",
               (member.owns ?? []).join(";"),
+              member.canManage ? "1" : "0",
+              member.readOnly ? "1" : "0",
+              member.scratchDir ?? "",
               member.killedAt,
               member.lastReadSeq,
               member.channels.join("+"),
@@ -348,20 +393,21 @@ const make = Effect.gen(function* () {
   const dir = path.join(config.stateDir, "agy", "swarms");
   const swarms = new Map<string, Board.StoredSwarm>();
   const byThread = new Map<string, string>();
-  const activeCoordinators = new Set<string>();
+  const activeCoordinators = new Map<string, AgySwarmKind>();
   activeCoordinatorsByStateDir.set(config.stateDir, activeCoordinators);
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       if (activeCoordinatorsByStateDir.get(config.stateDir) === activeCoordinators) {
         activeCoordinatorsByStateDir.delete(config.stateDir);
       }
+      pendingSwarmKindByStateDir.delete(config.stateDir);
     }),
   );
   const syncActiveCoordinator = (swarm: Board.StoredSwarm) => {
     const active =
       swarm.doneAt === null &&
       swarm.members.some((member) => member.role !== "coordinator" && Board.isLive(member));
-    if (active) activeCoordinators.add(swarm.coordinatorThreadId);
+    if (active) activeCoordinators.set(swarm.coordinatorThreadId, swarm.kind);
     else activeCoordinators.delete(swarm.coordinatorThreadId);
   };
   /** Threads parked in `swarm_wait`: a post reaches them there, not as a queued message. */
@@ -466,7 +512,7 @@ const make = Effect.gen(function* () {
     if (shell === null) return yield* refuse("The calling thread was not found.");
     const swarm = Board.newSwarm({
       id: yield* randomUuidV4,
-      kind: "swarm",
+      kind: consumePendingSwarmKind(config.stateDir, threadId),
       projectId: shell.projectId,
       coordinatorThreadId: threadId,
       instanceId: shell.modelSelection.instanceId,
@@ -576,6 +622,9 @@ const make = Effect.gen(function* () {
         worktreePath: member.worktreePath ?? shell?.worktreePath ?? null,
         branch: member.branch ?? shell?.branch ?? null,
         owns: member.owns ? [...member.owns] : [],
+        ...(member.canManage ? { canManage: true } : {}),
+        ...(member.readOnly ? { readOnly: true } : {}),
+        ...(member.scratchDir !== undefined ? { scratchDir: member.scratchDir } : {}),
         channels: [...member.channels],
         brief: member.brief,
         createdAt: member.createdAt,
@@ -724,9 +773,13 @@ const make = Effect.gen(function* () {
         : `[swarm] ${toDeliver.length} new posts on the board for you, ${target.name}` +
           (toDeliver.length > shown.length ? ` (latest ${shown.length} below):` : ":");
     const coordinatorHint =
-      target.role === "coordinator"
-        ? "\nCoordinate via the T3 Code MCP swarm tools (t3_swarm, post_message, read_board, swarm_wait): keep this turn short, do not enter plan mode or do worker tasks yourself; judge, dispatch or direct workers, and end your turn."
-        : "";
+      target.role !== "coordinator"
+        ? ""
+        : swarm.kind === "boost"
+          ? "\nOrchestrate via the T3 Code MCP swarm tools: in Phase 2, update plan.rounds and dispatch the next challenger; in Phase 3, spot-check the diff/citations and real test output yourself before updating finalAudit, posting [done] <summary>, and retiring finished workers."
+          : swarm.kind === "teamwork"
+            ? "\nAct as Sentinel via the T3 Code MCP swarm tools: keep this turn short, update the user at milestones, and launch a readOnly:true success-auditor once all milestones pass before posting [done] <summary>."
+            : "\nCoordinate via the T3 Code MCP swarm tools (t3_swarm, post_message, read_board, swarm_wait): keep this turn short, do not enter plan mode or do worker tasks yourself; judge, dispatch or direct workers, and end your turn.";
     const catchUpLine = caughtUp
       ? `Caught up through #${latest.seq}; no need to call read_board before acting. Act on what is yours, or end your turn if nothing is.`
       : `Catch up on earlier unread posts with read_board{since:${target.lastReadSeq}} and act on what is yours. If nothing is, end your turn.`;
@@ -790,6 +843,8 @@ const make = Effect.gen(function* () {
       readonly workspace: "inherit" | "worktree";
       readonly channels: ReadonlyArray<string>;
       readonly forkFrom: Board.StoredMember | undefined;
+      readonly readOnly: boolean;
+      readonly canManage: boolean;
     },
   ) {
     // Members live under the thread that added them, rooted at the swarm coordinator.
@@ -801,7 +856,19 @@ const make = Effect.gen(function* () {
     const threadId = ThreadId.make(yield* randomUuidV4);
     const commandId = CommandId.make(`agy-swarm:${swarm.id}:add:${spec.name}`);
     const title = `${swarm.title} · ${spec.name}`;
-    const text = `${SWARM_WORKER_PREAMBLE({ name: spec.name, swarmTitle: swarm.title, adder: adder.name })}\n\n## Your brief\n${spec.brief}`;
+    const scratchPath = path.join(dir, swarm.id, "scratch", spec.name);
+    const scratchDir = yield* fileSystem.makeDirectory(scratchPath, { recursive: true }).pipe(
+      Effect.as(scratchPath),
+      Effect.orElseSucceed(() => null),
+    );
+    const text = `${SWARM_WORKER_PREAMBLE({
+      name: spec.name,
+      swarmTitle: swarm.title,
+      adder: adder.name,
+      readOnly: spec.readOnly,
+      canManage: spec.canManage,
+      scratchDir,
+    })}\n\n## Your brief\n${spec.brief}`;
 
     if (spec.forkFrom !== undefined) {
       yield* threads
@@ -902,6 +969,7 @@ const make = Effect.gen(function* () {
         threadId,
         worktreePath: forkWorktreePath ?? forkedShell?.worktreePath ?? null,
         branch: forkBranch ?? forkedShell?.branch ?? null,
+        scratchDir,
       };
     }
 
@@ -945,6 +1013,7 @@ const make = Effect.gen(function* () {
       threadId,
       worktreePath: launchedThread?.worktreePath ?? null,
       branch: launchedThread?.branch ?? null,
+      scratchDir,
     };
   });
 
@@ -961,11 +1030,28 @@ const make = Effect.gen(function* () {
             ? ", own worktree"
             : `, worktree:${branch}`
           : "";
+      const roleTags = [
+        member.role,
+        ...(member.canManage ? ["manager"] : []),
+        ...(member.readOnly ? ["read-only"] : []),
+      ].join(", ");
       const ownsTag =
         member.owns && member.owns.length > 0 ? `; owns: ${member.owns.join(", ")}` : "";
-      return `- ${member.name} (${member.role}${model === null ? "" : `, ${model}`}${workspaceTag}): ${state}; last post ${last === null ? "none" : `#${last}`}; read up to #${member.lastReadSeq}${ownsTag}${activity === null ? "" : `; ${activity.replace(/\s+/gu, " ").slice(0, 100)}`}`;
+      return `- ${member.name} (${roleTags}${model === null ? "" : `, ${model}`}${workspaceTag}): ${state}; last post ${last === null ? "none" : `#${last}`}; read up to #${member.lastReadSeq}${ownsTag}${activity === null ? "" : `; ${activity.replace(/\s+/gu, " ").slice(0, 100)}`}`;
     });
-    return `Swarm "${swarm.title}", board head #${Board.head(swarm)}${swarm.doneAt === null ? "" : ", done"}.\n${lines.join("\n")}`;
+    const planNotes: string[] = [];
+    if (swarm.plan?.mode) planNotes.push(`mode=${swarm.plan.mode}`);
+    if (swarm.plan?.integrityMode) planNotes.push(`integrity=${swarm.plan.integrityMode}`);
+    if (swarm.plan?.milestones && swarm.plan.milestones.length > 0) {
+      const passed = swarm.plan.milestones.filter((m) => m.status === "passed").length;
+      planNotes.push(`milestones=${passed}/${swarm.plan.milestones.length}`);
+    }
+    if (swarm.plan?.rounds && swarm.plan.rounds.length > 0) {
+      planNotes.push(`rounds=${swarm.plan.rounds.length}`);
+    }
+    const kindLabel = swarm.kind === "swarm" ? "" : ` (${swarm.kind})`;
+    const planLine = planNotes.length > 0 ? `\nPlan: ${planNotes.join(", ")}` : "";
+    return `Swarm "${swarm.title}"${kindLabel}, board head #${Board.head(swarm)}${swarm.doneAt === null ? "" : ", done"}.${planLine}\n${lines.join("\n")}`;
   });
 
   const models: AgySwarmShape["models"] = Effect.fn("AgySwarm.models")(
@@ -1026,6 +1112,8 @@ const make = Effect.gen(function* () {
           workspace: input.workspace,
           channels: input.channels,
           owns: input.owns,
+          readOnly: input.readOnly,
+          manager: input.manager,
         });
       }
     }
@@ -1056,6 +1144,8 @@ const make = Effect.gen(function* () {
           readonly channels: ReadonlyArray<string>;
           readonly owns: ReadonlyArray<string>;
           readonly forkFrom: Board.StoredMember | undefined;
+          readonly readOnly: boolean;
+          readonly canManage: boolean;
         }> = [];
 
         for (const raw of rawSpecs) {
@@ -1066,6 +1156,17 @@ const make = Effect.gen(function* () {
           }
           if (reserved.has(raw.name)) {
             return yield* refuse(`"${raw.name}" is already being added.`);
+          }
+          if (raw.manager === true && !Board.canManageSwarm(adder)) {
+            return yield* refuse(
+              "Only the coordinator or a delegated manager can grant manager privileges.",
+            );
+          }
+          const workspace = raw.workspace ?? "inherit";
+          if (raw.readOnly === true && workspace === "worktree") {
+            return yield* refuse(
+              `Read-only worker "${raw.name}" does not need its own worktree; omit workspace or use "inherit".`,
+            );
           }
           batchSeen.add(raw.name);
 
@@ -1099,10 +1200,12 @@ const make = Effect.gen(function* () {
             name: raw.name,
             brief: raw.brief,
             model,
-            workspace: raw.workspace ?? "inherit",
+            workspace,
             channels,
             owns,
             forkFrom,
+            readOnly: raw.readOnly === true,
+            canManage: raw.manager === true,
           });
         }
 
@@ -1152,7 +1255,7 @@ const make = Effect.gen(function* () {
             failed.push({ name: spec.name, reason: result.failure.reason });
             continue;
           }
-          const { threadId, worktreePath, branch } = result.success;
+          const { threadId, worktreePath, branch, scratchDir } = result.success;
           const overlaps = Board.findOwnershipOverlaps(swarm.members, {
             name: spec.name,
             workspace: spec.workspace,
@@ -1175,6 +1278,9 @@ const make = Effect.gen(function* () {
             worktreePath,
             branch,
             owns: [...spec.owns],
+            ...(spec.canManage ? { canManage: true } : {}),
+            ...(spec.readOnly ? { readOnly: true } : {}),
+            scratchDir,
             channels: [...spec.channels],
             brief: spec.brief,
             createdAt: now,
@@ -1234,7 +1340,7 @@ const make = Effect.gen(function* () {
         for (const target of targets) {
           if (target.role === "coordinator")
             return yield* refuse("The coordinator cannot be killed.");
-          if (caller.role !== "coordinator" && target.addedBy !== caller.name) {
+          if (!Board.canManageSwarm(caller) && target.addedBy !== caller.name) {
             return yield* refuse(
               `You may kill only helpers you added; ${target.name} was added by ${target.addedBy}.`,
             );
@@ -1449,17 +1555,32 @@ const make = Effect.gen(function* () {
   const setPlan: AgySwarmShape["setPlan"] = (callerThreadId, input) =>
     withEnsuredSwarmLock(callerThreadId, ({ swarm, member }) =>
       Effect.gen(function* () {
-        if (member.role !== "coordinator")
-          return yield* refuse("Only the coordinator sets the overview.");
+        if (!Board.canManageSwarm(member)) {
+          return yield* refuse("Only the coordinator or a delegated manager sets the overview.");
+        }
         const existing = swarm.plan;
         const goal = input.goal ?? existing?.goal;
         if (goal === undefined) {
           return yield* refuse("This action needs `goal` on the first plan call.");
         }
+        const mode = input.mode ?? existing?.mode;
+        const integrityMode = input.integrityMode ?? existing?.integrityMode;
+        const projectDir = input.projectDir ?? existing?.projectDir;
+        const artifacts = input.artifacts ?? existing?.artifacts;
+        const milestones = input.milestones ?? existing?.milestones;
+        const rounds = input.rounds ?? existing?.rounds;
+        const finalAudit = input.finalAudit ?? existing?.finalAudit;
         swarm.plan = {
           goal,
           tasks: input.tasks ?? existing?.tasks ?? {},
           threads: input.threads ?? existing?.threads ?? [],
+          ...(mode === undefined ? {} : { mode }),
+          ...(integrityMode === undefined ? {} : { integrityMode }),
+          ...(projectDir === undefined ? {} : { projectDir }),
+          ...(artifacts === undefined ? {} : { artifacts }),
+          ...(milestones === undefined ? {} : { milestones }),
+          ...(rounds === undefined ? {} : { rounds }),
+          ...(finalAudit === undefined ? {} : { finalAudit }),
         };
         yield* save(swarm);
         return "Overview updated.";
@@ -1485,8 +1606,9 @@ const make = Effect.gen(function* () {
         }
         const existing = swarm.channels.find((item) => item.name === name);
         if (input.op === "create") {
-          if (caller.role !== "coordinator")
-            return yield* refuse("Only the coordinator creates channels.");
+          if (!Board.canManageSwarm(caller)) {
+            return yield* refuse("Only the coordinator or a delegated manager creates channels.");
+          }
           if (existing !== undefined) return yield* refuse(`#${name} already exists.`);
           swarm.channels.push({
             name,
@@ -1499,14 +1621,19 @@ const make = Effect.gen(function* () {
           if (existing === undefined) return yield* refuse(`#${name} does not exist.`);
           if (name === Board.MAIN_CHANNEL) return yield* refuse("#main cannot be changed.");
           if (input.op === "archive") {
-            if (caller.role !== "coordinator")
-              return yield* refuse("Only the coordinator archives channels.");
+            if (!Board.canManageSwarm(caller)) {
+              return yield* refuse(
+                "Only the coordinator or a delegated manager archives channels.",
+              );
+            }
             existing.archived = true;
           } else {
             const who = input.name === undefined ? caller : Board.memberByName(swarm, input.name);
             if (who === undefined) return yield* refuse(`No member "${input.name}".`);
-            if (who !== caller && caller.role !== "coordinator") {
-              return yield* refuse("Only the coordinator moves other members between channels.");
+            if (who !== caller && !Board.canManageSwarm(caller)) {
+              return yield* refuse(
+                "Only the coordinator or a delegated manager moves other members between channels.",
+              );
             }
             who.channels =
               input.op === "join"

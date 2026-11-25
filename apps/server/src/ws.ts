@@ -2462,6 +2462,8 @@ export const layerWsRpc = (
                 ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
                 ...(input.channels === undefined ? {} : { channels: input.channels }),
                 ...(input.owns === undefined ? {} : { owns: input.owns }),
+                ...(input.readOnly === undefined ? {} : { readOnly: input.readOnly }),
+                ...(input.manager === undefined ? {} : { manager: input.manager }),
               })
               .pipe(Effect.map((message) => ({ message }))),
           ),

@@ -129,7 +129,7 @@
     },
     {
       "file": "packages/contracts/src/keybindings.ts",
-      "snippets": ["\"swarm.toggle\""]
+      "snippets": ["\"swarm.toggle\"", "\"swarm.jumpNeedsInput\""]
     },
     {
       "file": "packages/client-runtime/package.json",
@@ -145,11 +145,11 @@
     },
     {
       "file": "apps/web/src/components/CommandPalette.tsx",
-      "snippets": ["openSwarmSurface(threadRef)"]
+      "snippets": ["openSwarmSurface(threadRef)", "jumpToNextNeedsInputMember(threadRef,"]
     },
     {
       "file": "apps/web/src/components/settings/KeybindingsSettings.logic.ts",
-      "snippets": ["\"swarm.toggle\""]
+      "snippets": ["\"swarm.toggle\"", "\"swarm.jumpNeedsInput\""]
     },
     {
       "file": "apps/web/src/components/chat/useComposerMenuItems.ts",
@@ -233,7 +233,10 @@
     },
     {
       "file": "packages/shared/src/keybindings.ts",
-      "snippets": ["{ key: \"alt+s\", command: \"swarm.toggle\", when: \"!terminalFocus\" },"]
+      "snippets": [
+        "{ key: \"alt+s\", command: \"swarm.toggle\", when: \"!terminalFocus\" },",
+        "{ key: \"alt+j\", command: \"swarm.jumpNeedsInput\", when: \"!terminalFocus\" },"
+      ]
     },
     {
       "file": "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts",

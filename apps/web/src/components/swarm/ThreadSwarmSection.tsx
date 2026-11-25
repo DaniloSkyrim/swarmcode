@@ -17,8 +17,10 @@ import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "../chat/threadDetailsPanelStyles";
+import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { openSwarmSurface } from "./openSwarmSurface";
+import { needsInputMembers } from "./swarmBoard.logic";
 
 /** Shown only while the thread coordinates or works in a swarm. */
 export function ThreadSwarmSection(props: {
@@ -33,7 +35,10 @@ export function ThreadSwarmSection(props: {
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const live = swarm.members.filter((member) => member.state !== "killed");
   const working = live.filter((member) => member.state === "working").length;
+  const waitingInput = needsInputMembers(live).length;
   const shortcut = shortcutLabelForCommand(keybindings, "swarm.toggle");
+  const kindBadge =
+    swarm.kind === "boost" ? gt("Boost") : swarm.kind === "teamwork" ? gt("Teamwork") : null;
   return (
     <ThreadDetailsSection headingId={headingId} title={gt("Swarm")}>
       <div>
@@ -47,8 +52,22 @@ export function ThreadSwarmSection(props: {
           <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
             {swarm.title.trim() === "" ? <T>Swarm board</T> : swarm.title}
           </span>
-          <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-            {working > 0 ? (
+          {kindBadge ? (
+            <Badge variant="secondary" size="sm">
+              {kindBadge}
+            </Badge>
+          ) : null}
+          <span
+            className={cn(
+              "shrink-0 text-xs font-normal tabular-nums",
+              waitingInput > 0 ? "text-warning-foreground" : "text-muted-foreground",
+            )}
+          >
+            {waitingInput > 0 ? (
+              gt("{count, plural, one {{count} needs input} other {{count} need input}}", {
+                count: waitingInput,
+              })
+            ) : working > 0 ? (
               <T>
                 <Var>{working}</Var> working
               </T>

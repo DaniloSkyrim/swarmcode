@@ -80,6 +80,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+shift+j", command: "preview.toggle" },
   { key: "alt+s", command: "swarm.toggle", when: "!terminalFocus" },
+  { key: "alt+j", command: "swarm.jumpNeedsInput", when: "!terminalFocus" },
   { key: "mod+r", command: "preview.refresh", when: "previewFocus" },
   { key: "mod+l", command: "preview.focusUrl", when: "previewFocus" },
   { key: "mod+=", command: "preview.zoomIn", when: "previewFocus" },

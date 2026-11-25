@@ -1,22 +1,39 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { AgySwarmMetrics, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type {
+  AgySwarmKind,
+  AgySwarmMetrics,
+  EnvironmentId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, NetworkIcon, UserPlusIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type KeyboardEvent, useId, useState } from "react";
 
+import { shortcutLabelForCommand } from "~/keybindings";
+import { openSideThread } from "~/lib/sideChatPane";
 import { cn } from "~/lib/utils";
 import { agySwarmEnvironment, useAgySwarm } from "~/state/agySwarm";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { buildThreadRouteParams } from "~/threadRoutes";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SwarmAddWorkerDialog } from "./SwarmAddWorkerDialog";
+import { SwarmStateDot } from "./SwarmAvatar";
 import { SwarmBoard } from "./SwarmBoard";
 import { SwarmGraph } from "./SwarmGraph";
 import { SwarmMembers } from "./SwarmMembers";
 import { SwarmOverview } from "./SwarmOverview";
 import {
+  boostRoundProgress,
   formatTokenCount,
   liveMemberCount,
+  milestoneProgress,
+  needsInputMembers,
+  nextNeedsInputMember,
   NO_POST_FILTER,
   type PostFilter,
 } from "./swarmBoard.logic";
@@ -28,6 +45,11 @@ const VIEW_LABELS = {
   overview: msg("Overview", { $context: "swarm tab, the coordinator's plan" }),
 } as const;
 type SwarmView = keyof typeof VIEW_LABELS;
+
+const KIND_LABELS: Partial<Record<AgySwarmKind, string>> = {
+  boost: msg("Boost", { $context: "swarm kind badge" }),
+  teamwork: msg("Teamwork", { $context: "swarm kind badge" }),
+};
 
 const MAX_REMEMBERED_VIEWS = 200;
 
@@ -118,6 +140,7 @@ function SwarmMetricsSummary(props: { metrics: AgySwarmMetrics | undefined }) {
 export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: EnvironmentId }) {
   const gt = useGT();
   const resolve = useMessages();
+  const navigate = useNavigate();
   const idBase = useId();
   const viewKey = `${props.environmentId}:${props.threadRef.threadId}`;
   const [viewState, setViewState] = useState<{ key: string; view: SwarmView } | null>(null);
@@ -131,6 +154,7 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
   const [filter, setFilter] = useState<PostFilter>(NO_POST_FILTER);
   const [follow, setFollow] = useState(true);
   const [addWorkerOpen, setAddWorkerOpen] = useState(false);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canAddWorker = useAtomValue(agySwarmEnvironment.add.permissionAtom(props.environmentId));
   const { swarm, loaded, error } = useAgySwarm(props.environmentId, props.threadRef.threadId);
 
@@ -158,11 +182,35 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
     );
   }
 
-  const views: ReadonlyArray<{ key: SwarmView; count: number | null }> = [
+  const milestones = milestoneProgress(swarm.plan);
+  const rounds = boostRoundProgress(swarm.plan);
+  const overviewCount =
+    milestones !== null
+      ? `${milestones.passed}/${milestones.total}`
+      : rounds !== null
+        ? String(rounds.total)
+        : null;
+  const waitingInput = needsInputMembers(swarm.members);
+  const jumpShortcut = shortcutLabelForCommand(keybindings, "swarm.jumpNeedsInput");
+  const kindLabel = KIND_LABELS[swarm.kind];
+  const handleJumpNeedsInput = () => {
+    const target =
+      nextNeedsInputMember(swarm.members, props.threadRef.threadId) ?? waitingInput[0] ?? null;
+    if (target === null) return;
+    openSideThread({
+      threadRef: scopeThreadRef(props.environmentId, target.threadId),
+      panelRef: props.threadRef,
+      intent: "primary",
+      navigate: (next) =>
+        void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(next) }),
+    });
+  };
+
+  const views: ReadonlyArray<{ key: SwarmView; count: string | number | null }> = [
     { key: "board", count: swarm.head },
     { key: "members", count: liveMemberCount(swarm.members) },
     { key: "graph", count: null },
-    ...(swarm.plan === null ? [] : [{ key: "overview" as const, count: null }]),
+    ...(swarm.plan === null ? [] : [{ key: "overview" as const, count: overviewCount }]),
   ];
   const view = views.some((entry) => entry.key === selectedView) ? selectedView : "board";
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -181,9 +229,39 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
     <div className="flex min-h-0 flex-1 flex-col" data-testid="swarm-panel">
       <header className="shrink-0 border-b border-border/60 px-4 pt-3">
         <div className="flex min-h-5 items-center gap-2">
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-            {swarm.title}
-          </h2>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">
+              {swarm.title}
+            </h2>
+            {kindLabel ? (
+              <Badge variant="secondary" size="sm">
+                {resolve(kindLabel)}
+              </Badge>
+            ) : null}
+          </div>
+          {waitingInput.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Badge
+                    variant="warning"
+                    size="sm"
+                    render={<button type="button" onClick={handleJumpNeedsInput} />}
+                  />
+                }
+              >
+                <SwarmStateDot state="needs-input" />
+                {gt("{count, plural, one {{count} needs input} other {{count} need input}}", {
+                  count: waitingInput.length,
+                })}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {jumpShortcut
+                  ? gt("Jump to member awaiting input ({shortcut})", { shortcut: jumpShortcut })
+                  : gt("Jump to member awaiting input")}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           <SwarmMetricsSummary metrics={swarm.metrics} />
           <SwarmStatus done={swarm.doneAt !== null} />
           {canAddWorker ? (

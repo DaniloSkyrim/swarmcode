@@ -477,6 +477,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "pullRequest.copyNumber": msg("Pull Request: Copy Number"),
   "diff.toggle": msg("Diff: Toggle"),
   "swarm.toggle": msg("Swarm: Toggle"),
+  "swarm.jumpNeedsInput": msg("Swarm: Jump to Member Needing Input"),
   "preview.toggle": msg("Preview: Toggle"),
   "preview.refresh": msg("Preview: Refresh"),
   "preview.zoomIn": msg("Preview: Zoom In"),
