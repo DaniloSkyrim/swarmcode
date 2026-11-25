@@ -6,6 +6,8 @@
     "apps/server/src/agy/agyPromptExpansion.test.ts",
     "apps/server/src/agy/agyPromptExpansion.ts",
     "apps/server/src/agy/agyPrompts.ts",
+    "apps/server/src/agy/antigravityElicitation.test.ts",
+    "apps/server/src/agy/antigravityElicitation.ts",
     "apps/server/src/agy/swarm/AgySwarm.test.ts",
     "apps/server/src/agy/swarm/AgySwarm.ts",
     "apps/server/src/agy/swarm/swarmBoard.test.ts",
@@ -194,6 +196,13 @@
     {
       "file": "packages/shared/src/keybindings.ts",
       "snippets": ["{ key: \"alt+s\", command: \"swarm.toggle\", when: \"!terminalFocus\" },"]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts",
+      "snippets": [
+        "appendAntigravitySessionInstructions(",
+        "extractElicitationForm: extractAntigravityElicitationForm,"
+      ]
     },
     {
       "file": "packages/client-runtime/src/state/threadInbox.ts",
