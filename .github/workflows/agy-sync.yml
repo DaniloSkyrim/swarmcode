@@ -52,9 +52,11 @@ jobs:
           git config user.email "agy-sync@users.noreply.github.com"
           git remote add upstream "$UPSTREAM_URL"
           git fetch --no-tags upstream main
-          echo "Upstream main: $(git rev-parse upstream/main)"
+          upstream_sha="$(git rev-parse upstream/main)"
+          echo "Upstream main: $upstream_sha"
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
           if git merge-base --is-ancestor upstream/main HEAD && \
-            [[ "$(git rev-parse --verify -q origin/main || true)" == "$(git rev-parse upstream/main)" ]]; then
+            [[ "$(git rev-parse --verify -q origin/main || true)" == "$upstream_sha" ]]; then
             echo "agy already has upstream main; nothing to sync."
             echo "up_to_date=true" >> "$GITHUB_OUTPUT"
           fi
@@ -96,7 +98,6 @@ jobs:
               git commit --no-edit
             fi
             echo "lock_resolved=$lock_resolved" >> "$GITHUB_OUTPUT"
-            echo "upstream_sha=$(git rev-parse upstream/main)" >> "$GITHUB_OUTPUT"
           } 2>&1 | tee "$LOG_DIR/02-merge.log"
 
       # A clean merge keeps a frozen lockfile. A lockfile taken from upstream is
@@ -194,7 +195,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+          UPSTREAM_SHA: ${{ steps.upstream.outputs.upstream_sha }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
