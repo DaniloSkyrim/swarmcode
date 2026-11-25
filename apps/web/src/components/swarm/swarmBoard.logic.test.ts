@@ -4,13 +4,17 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   filterPosts,
   firstUnreadSeq,
+  formatTokenCount,
   graphFrame,
   groupMembers,
+  isDirtyWorktreeKillError,
   layoutGraph,
   memberBee,
   memberCue,
   memberSnippet,
+  mergePosts,
   NO_POST_FILTER,
+  parseDelimitedList,
   postBody,
   postCue,
   QUEEN_BEE,
@@ -213,5 +217,23 @@ describe("swarm board logic", () => {
     const nodes = layoutGraph([member("a"), member("coordinator"), member("b")], 100, 100);
     expect(nodes[0]).toMatchObject({ member: { name: "coordinator" }, x: 50 });
     expect(nodes[0]!.y).toBeLessThan(nodes[1]!.y);
+  });
+
+  it("merges paginated posts without duplicates and formats token metrics", () => {
+    const merged = mergePosts([post(1), post(2)], [post(2, { text: "updated" }), post(3)]);
+    expect(merged.map((entry) => entry.seq)).toEqual([1, 2, 3]);
+    expect(merged[1]?.text).toBe("updated");
+    expect(formatTokenCount(420)).toBe("420");
+    expect(formatTokenCount(1_240)).toBe("1.2k");
+    expect(formatTokenCount(48_400)).toBe("48k");
+    expect(formatTokenCount(1_450_000)).toBe("1.5M");
+    expect(
+      isDirtyWorktreeKillError("Worktree has uncommitted changes. Pass force: true to remove it."),
+    ).toBe(true);
+    expect(isDirtyWorktreeKillError("Member not found")).toBe(false);
+    expect(parseDelimitedList("apps/web/src/, apps/server/src/\napps/web/src/")).toEqual([
+      "apps/web/src/",
+      "apps/server/src/",
+    ]);
   });
 });

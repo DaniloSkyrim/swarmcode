@@ -162,13 +162,25 @@ export interface PostFilter {
 
 export const NO_POST_FILTER: PostFilter = { member: null, channel: null, query: "" };
 
+export function mergePosts(
+  older: ReadonlyArray<AgySwarmPost>,
+  live: ReadonlyArray<AgySwarmPost>,
+): ReadonlyArray<AgySwarmPost> {
+  if (older.length === 0) return live;
+  const bySeq = new Map<number, AgySwarmPost>();
+  for (const post of older) bySeq.set(post.seq, post);
+  for (const post of live) bySeq.set(post.seq, post);
+  return [...bySeq.values()].sort((left, right) => left.seq - right.seq);
+}
+
 export function filterPosts(
   snapshot: AgySwarmSnapshot,
   filter: PostFilter,
+  sourcePosts: ReadonlyArray<AgySwarmPost> = snapshot.posts,
 ): ReadonlyArray<AgySwarmPost> {
   const query = filter.query.trim().toLowerCase();
-  if (filter.member === null && filter.channel === null && query === "") return snapshot.posts;
-  return snapshot.posts.filter(
+  if (filter.member === null && filter.channel === null && query === "") return sourcePosts;
+  return sourcePosts.filter(
     (post) =>
       (filter.channel === null || post.channel === filter.channel) &&
       (filter.member === null || postInvolves(snapshot.members, post, filter.member)) &&
@@ -352,4 +364,35 @@ export function postsSpanMs(posts: ReadonlyArray<AgySwarmPost>): number {
   const last = posts.at(-1);
   if (first === undefined || last === undefined) return 0;
   return Math.max(0, Date.parse(last.createdAt) - Date.parse(first.createdAt));
+}
+
+/** Compact human-readable token counter (e.g. `420`, `1.2k`, `48k`, `1.4M`). */
+export function formatTokenCount(tokens: number): string {
+  if (tokens < 1_000) return String(Math.max(0, Math.round(tokens)));
+  if (tokens < 10_000) {
+    const tenths = Math.round(tokens / 100) / 10;
+    return `${tenths.toFixed(1).replace(/\.0$/u, "")}k`;
+  }
+  if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
+  const tenths = Math.round(tokens / 100_000) / 10;
+  return `${tenths.toFixed(1).replace(/\.0$/u, "")}M`;
+}
+
+/** Whether a kill error message indicates a dirty worktree that requires `force: true`. */
+export function isDirtyWorktreeKillError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /uncommitted changes|force\s*:\s*true/iu.test(message);
+}
+
+/** Parse comma- or newline-separated paths/items, trimming blanks and removing duplicates. */
+export function parseDelimitedList(raw: string): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const part of raw.split(/[,\n]/u)) {
+    const trimmed = part.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    items.push(trimmed);
+  }
+  return items;
 }

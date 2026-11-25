@@ -9,9 +9,9 @@ import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.t
 export const AgySwarmMemberName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(40),
   Schema.makeFilter((value) =>
-    /^[a-z][a-z0-9_-]*$/u.test(value)
+    /^[a-z0-9][a-z0-9_-]*$/u.test(value)
       ? true
-      : "A swarm member name is lowercase letters, digits, '-' and '_', starting with a letter.",
+      : "A swarm member name is lowercase letters, digits, '-' and '_', starting with a letter or digit.",
   ),
 );
 export type AgySwarmMemberName = typeof AgySwarmMemberName.Type;
@@ -29,6 +29,16 @@ export const AgySwarmMemberState = Schema.Literals([
 ]);
 export type AgySwarmMemberState = typeof AgySwarmMemberState.Type;
 
+export const AgySwarmMetrics = Schema.Struct({
+  turns: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  cachedInputTokens: NonNegativeInt,
+  reasoningTokens: NonNegativeInt,
+  totalTokens: NonNegativeInt,
+});
+export type AgySwarmMetrics = typeof AgySwarmMetrics.Type;
+
 export const AgySwarmMember = Schema.Struct({
   name: Schema.String,
   threadId: ThreadId,
@@ -37,6 +47,9 @@ export const AgySwarmMember = Schema.Struct({
   instanceId: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
   workspace: Schema.Literals(["inherit", "worktree"]),
+  worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
+  branch: Schema.optional(Schema.NullOr(Schema.String)),
+  owns: Schema.optional(Schema.Array(Schema.String)),
   channels: Schema.Array(Schema.String),
   brief: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
@@ -45,6 +58,7 @@ export const AgySwarmMember = Schema.Struct({
   lastPostSeq: Schema.NullOr(NonNegativeInt),
   state: AgySwarmMemberState,
   activity: Schema.NullOr(Schema.String),
+  metrics: Schema.optional(AgySwarmMetrics),
 });
 export type AgySwarmMember = typeof AgySwarmMember.Type;
 
@@ -99,8 +113,18 @@ export const AgySwarmSnapshot = Schema.Struct({
   members: Schema.Array(AgySwarmMember),
   posts: Schema.Array(AgySwarmPost),
   head: NonNegativeInt,
+  totalPostCount: Schema.optional(NonNegativeInt),
+  oldestIncludedSeq: Schema.optional(NonNegativeInt),
+  metrics: Schema.optional(AgySwarmMetrics),
 });
 export type AgySwarmSnapshot = typeof AgySwarmSnapshot.Type;
+
+export class AgySwarmRequestError extends Schema.TaggedError<AgySwarmRequestError>()(
+  "AgySwarmRequestError",
+  {
+    message: Schema.String,
+  },
+) {}
 
 export const AgySwarmGetInput = Schema.Struct({ threadId: ThreadId });
 export type AgySwarmGetInput = typeof AgySwarmGetInput.Type;
@@ -108,6 +132,64 @@ export type AgySwarmGetInput = typeof AgySwarmGetInput.Type;
 /** Null when the thread belongs to no swarm. */
 export const AgySwarmGetResult = Schema.NullOr(AgySwarmSnapshot);
 export type AgySwarmGetResult = typeof AgySwarmGetResult.Type;
+
+export const AgySwarmPostInput = Schema.Struct({
+  threadId: ThreadId,
+  text: TrimmedNonEmptyString,
+  channel: Schema.optional(Schema.String),
+});
+export type AgySwarmPostInput = typeof AgySwarmPostInput.Type;
+
+export const AgySwarmPostResult = Schema.Struct({
+  seq: NonNegativeInt,
+  mentions: Schema.Array(Schema.String),
+  note: Schema.optional(Schema.String),
+});
+export type AgySwarmPostResult = typeof AgySwarmPostResult.Type;
+
+export const AgySwarmKillInput = Schema.Struct({
+  threadId: ThreadId,
+  name: TrimmedNonEmptyString,
+  force: Schema.optional(Schema.Boolean),
+});
+export type AgySwarmKillInput = typeof AgySwarmKillInput.Type;
+
+export const AgySwarmRetryInput = Schema.Struct({
+  threadId: ThreadId,
+  name: TrimmedNonEmptyString,
+  message: Schema.optional(Schema.String),
+});
+export type AgySwarmRetryInput = typeof AgySwarmRetryInput.Type;
+
+export const AgySwarmAddInput = Schema.Struct({
+  threadId: ThreadId,
+  name: AgySwarmMemberName,
+  brief: TrimmedNonEmptyString,
+  model: Schema.optional(Schema.String),
+  reasoningEffort: Schema.optional(Schema.String),
+  workspace: Schema.optional(Schema.Literals(["inherit", "worktree"])),
+  channels: Schema.optional(Schema.Array(Schema.String)),
+  owns: Schema.optional(Schema.Array(Schema.String)),
+});
+export type AgySwarmAddInput = typeof AgySwarmAddInput.Type;
+
+export const AgySwarmActionResult = Schema.Struct({
+  message: Schema.String,
+});
+export type AgySwarmActionResult = typeof AgySwarmActionResult.Type;
+
+export const AgySwarmLoadPostsInput = Schema.Struct({
+  threadId: ThreadId,
+  beforeSeq: NonNegativeInt,
+  limit: Schema.optional(NonNegativeInt),
+});
+export type AgySwarmLoadPostsInput = typeof AgySwarmLoadPostsInput.Type;
+
+export const AgySwarmLoadPostsResult = Schema.Struct({
+  posts: Schema.Array(AgySwarmPost),
+  hasMore: Schema.Boolean,
+});
+export type AgySwarmLoadPostsResult = typeof AgySwarmLoadPostsResult.Type;
 
 /** Coordinator thread currently running an active swarm with at least one working worker. */
 export const AgyActiveSwarm = Schema.Struct({
@@ -124,7 +206,14 @@ export type AgyActiveSwarmsSnapshot = typeof AgyActiveSwarmsSnapshot.Type;
 export const AGY_WS_METHODS = {
   swarmSubscribe: "agy.swarm.subscribe",
   swarmActiveSubscribe: "agy.swarm.activeSubscribe",
+  swarmPost: "agy.swarm.post",
+  swarmKill: "agy.swarm.kill",
+  swarmRetry: "agy.swarm.retry",
+  swarmAdd: "agy.swarm.add",
+  swarmLoadPosts: "agy.swarm.loadPosts",
 } as const;
+
+const AgySwarmRpcError = Schema.Union([AgySwarmRequestError, EnvironmentAuthorizationError]);
 
 /** Emits the swarm of a thread (as coordinator or member) now and on every change. */
 export const AgyWsSwarmSubscribeRpc = Rpc.make(AGY_WS_METHODS.swarmSubscribe, {
@@ -140,6 +229,36 @@ export const AgyWsSwarmActiveSubscribeRpc = Rpc.make(AGY_WS_METHODS.swarmActiveS
   success: AgyActiveSwarmsSnapshot,
   error: EnvironmentAuthorizationError,
   stream: true,
+});
+
+export const AgyWsSwarmPostRpc = Rpc.make(AGY_WS_METHODS.swarmPost, {
+  payload: AgySwarmPostInput,
+  success: AgySwarmPostResult,
+  error: AgySwarmRpcError,
+});
+
+export const AgyWsSwarmKillRpc = Rpc.make(AGY_WS_METHODS.swarmKill, {
+  payload: AgySwarmKillInput,
+  success: AgySwarmActionResult,
+  error: AgySwarmRpcError,
+});
+
+export const AgyWsSwarmRetryRpc = Rpc.make(AGY_WS_METHODS.swarmRetry, {
+  payload: AgySwarmRetryInput,
+  success: AgySwarmActionResult,
+  error: AgySwarmRpcError,
+});
+
+export const AgyWsSwarmAddRpc = Rpc.make(AGY_WS_METHODS.swarmAdd, {
+  payload: AgySwarmAddInput,
+  success: AgySwarmActionResult,
+  error: AgySwarmRpcError,
+});
+
+export const AgyWsSwarmLoadPostsRpc = Rpc.make(AGY_WS_METHODS.swarmLoadPosts, {
+  payload: AgySwarmLoadPostsInput,
+  success: AgySwarmLoadPostsResult,
+  error: AgySwarmRpcError,
 });
 
 // Slash commands the fork adds. A command a provider or upstream T3 already offers under the

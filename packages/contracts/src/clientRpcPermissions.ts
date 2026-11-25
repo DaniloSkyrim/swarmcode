@@ -13,6 +13,7 @@ import {
   type AuthEnvironmentScope,
   mcpClientScopes,
 } from "./auth.ts";
+import { AGY_WS_METHODS } from "./agy.ts";
 import { PeerLinkLinkPairingInput } from "./peerLink.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
@@ -105,6 +106,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
   // Send stores and sends a report from a thread's turn: the bar of running that thread.
   [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
+  [AGY_WS_METHODS.swarmPost]: AuthOrchestrationOperateScope,
+  [AGY_WS_METHODS.swarmKill]: AuthOrchestrationOperateScope,
+  [AGY_WS_METHODS.swarmRetry]: AuthOrchestrationOperateScope,
+  [AGY_WS_METHODS.swarmAdd]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -10,7 +10,10 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 const EMPTY_ACTIVE_SWARMS: ReadonlyMap<string, string> = new Map();
 
@@ -104,5 +107,25 @@ export function createAgySwarmEnvironmentAtoms<R, E>(
     activeSwarms,
     // Aggregated map of `${environmentId}:${threadId}` -> active start timestamp across environments.
     activeSwarmsAcross,
+    post: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:agy:swarm:post",
+      tag: AGY_WS_METHODS.swarmPost,
+    }),
+    kill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:agy:swarm:kill",
+      tag: AGY_WS_METHODS.swarmKill,
+    }),
+    retry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:agy:swarm:retry",
+      tag: AGY_WS_METHODS.swarmRetry,
+    }),
+    add: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:agy:swarm:add",
+      tag: AGY_WS_METHODS.swarmAdd,
+    }),
+    loadPosts: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:agy:swarm:load-posts",
+      tag: AGY_WS_METHODS.swarmLoadPosts,
+    }),
   };
 }

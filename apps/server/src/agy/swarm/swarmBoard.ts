@@ -6,6 +6,40 @@ export const COORDINATOR = "coordinator";
 export const MAIN_CHANNEL = "main";
 const RESERVED_NAMES = new Set([COORDINATOR, "all", "user"]);
 
+export interface StoredMemberMetrics {
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+}
+
+export const emptyMetrics = (): StoredMemberMetrics => ({
+  turns: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedInputTokens: 0,
+  reasoningTokens: 0,
+  totalTokens: 0,
+});
+
+export function sumMetrics(
+  entries: ReadonlyArray<StoredMemberMetrics | undefined>,
+): StoredMemberMetrics {
+  const total = emptyMetrics();
+  for (const item of entries) {
+    if (item === undefined) continue;
+    total.turns += item.turns;
+    total.inputTokens += item.inputTokens;
+    total.outputTokens += item.outputTokens;
+    total.cachedInputTokens += item.cachedInputTokens;
+    total.reasoningTokens += item.reasoningTokens;
+    total.totalTokens += item.totalTokens;
+  }
+  return total;
+}
+
 export interface StoredMember {
   readonly name: string;
   readonly threadId: string;
@@ -14,6 +48,9 @@ export interface StoredMember {
   instanceId: string | null;
   model: string | null;
   readonly workspace: "inherit" | "worktree";
+  worktreePath?: string | null;
+  branch?: string | null;
+  owns?: string[];
   channels: string[];
   readonly brief: string | null;
   readonly createdAt: string;
@@ -23,6 +60,7 @@ export interface StoredMember {
   lastWakeSeq: number;
   /** `swarm_wait{mentions_only:false}` parks the member on any post in its channels. */
   wakeOnAny: boolean;
+  metrics?: StoredMemberMetrics;
 }
 
 export interface StoredPost {
@@ -130,17 +168,75 @@ export function membersNamed(swarm: StoredSwarm, name: string): StoredMember[] {
 }
 
 export function validateNewName(swarm: StoredSwarm, name: string): string | null {
-  if (!/^[a-z][a-z0-9_-]{0,39}$/u.test(name)) {
-    return `"${name}" is not a valid member name: use lowercase letters, digits, '-' and '_', starting with a letter.`;
+  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/u.test(name)) {
+    return `"${name}" is not a valid member name: use lowercase letters, digits, '-' and '_', starting with a letter or digit.`;
   }
-  if (RESERVED_NAMES.has(name)) return `"${name}" is reserved.`;
+  if (RESERVED_NAMES.has(name) || name.startsWith(`${COORDINATOR}-`)) {
+    return `"${name}" is reserved.`;
+  }
   if (memberByName(swarm, name) !== undefined) {
     return `"${name}" is taken${memberByName(swarm, name)?.killedAt === null ? "" : " by a killed member; killed names cannot be reused"}.`;
   }
   return null;
 }
 
-const MENTION_PATTERN = /(^|[^\w@])@(#?[a-z][a-z0-9_-]*)/gu;
+export interface OwnershipOverlap {
+  readonly member: string;
+  readonly ownPath: string;
+  readonly otherPath: string;
+}
+
+function normalizeOwnershipPath(raw: string): string {
+  return raw
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/^\.\/+/u, "")
+    .replace(/\/+\*\*$/u, "")
+    .replace(/\/+\*$/u, "")
+    .replace(/\/+$/u, "");
+}
+
+function ownershipPathsOverlap(leftRaw: string, rightRaw: string): boolean {
+  const left = normalizeOwnershipPath(leftRaw);
+  const right = normalizeOwnershipPath(rightRaw);
+  if (left === "" || left === "." || left === "*" || left === "**") return true;
+  if (right === "" || right === "." || right === "*" || right === "**") return true;
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+/**
+ * Finds path overlaps between a candidate shared-workspace worker and other live shared-workspace
+ * workers. Workers with `workspace:"worktree"` are isolated and never collide.
+ */
+export function findOwnershipOverlaps(
+  members: ReadonlyArray<
+    Pick<StoredMember, "name" | "workspace" | "killedAt"> & {
+      readonly owns?: ReadonlyArray<string> | undefined;
+    }
+  >,
+  candidate: {
+    readonly name: string;
+    readonly workspace: "inherit" | "worktree";
+    readonly owns: ReadonlyArray<string>;
+  },
+): OwnershipOverlap[] {
+  if (candidate.workspace !== "inherit" || candidate.owns.length === 0) return [];
+  const overlaps: OwnershipOverlap[] = [];
+  for (const other of members) {
+    if (other.killedAt !== null || other.name === candidate.name) continue;
+    if (other.workspace !== "inherit" || !other.owns || other.owns.length === 0) continue;
+    for (const ownPath of candidate.owns) {
+      for (const otherPath of other.owns) {
+        if (ownershipPathsOverlap(ownPath, otherPath)) {
+          overlaps.push({ member: other.name, ownPath, otherPath });
+        }
+      }
+    }
+  }
+  return overlaps;
+}
+
+const MENTION_PATTERN = /(^|[^\w@])@(#?[a-z0-9][a-z0-9_-]*)/gu;
 
 /** Resolved mention targets as written: member names, group prefixes, `all`, `#channel`. */
 function parseMentions(swarm: StoredSwarm, text: string): string[] {
@@ -177,14 +273,35 @@ function mentionsMember(swarm: StoredSwarm, post: StoredPost, member: StoredMemb
   });
 }
 
-/** Members that should be woken by a post: named, or parked on anything they can see. */
+/** Members that should be woken by a post: visible to them, and named or parked on anything. */
 export function wakeTargets(swarm: StoredSwarm, post: StoredPost): StoredMember[] {
   return swarm.members.filter(
     (member) =>
       isLive(member) &&
       member.name !== post.from &&
-      (mentionsMember(swarm, post, member) || (member.wakeOnAny && visibleTo(member, post))),
+      visibleTo(member, post) &&
+      (mentionsMember(swarm, post, member) || member.wakeOnAny),
   );
+}
+
+/** Live members explicitly named by @name/@group who cannot read the post's private channel. */
+export function hiddenMentionedMembers(swarm: StoredSwarm, post: StoredPost): string[] {
+  if (post.channel === MAIN_CHANNEL) return [];
+  const hidden: string[] = [];
+  for (const token of post.mentions) {
+    if (token === "all" || token.startsWith("#")) continue;
+    for (const member of membersNamed(swarm, token)) {
+      if (
+        isLive(member) &&
+        member.name !== post.from &&
+        !visibleTo(member, post) &&
+        !hidden.includes(member.name)
+      ) {
+        hidden.push(member.name);
+      }
+    }
+  }
+  return hidden;
 }
 
 /**
@@ -205,6 +322,13 @@ export function unreadWakePosts(
   );
 }
 
+/** All visible posts after `member.lastReadSeq` written by others, in board order. */
+export function unreadVisiblePosts(swarm: StoredSwarm, member: StoredMember): StoredPost[] {
+  return swarm.posts.filter(
+    (post) => post.seq > member.lastReadSeq && post.from !== member.name && visibleTo(member, post),
+  );
+}
+
 export function appendPost(
   swarm: StoredSwarm,
   input: {
@@ -212,29 +336,40 @@ export function appendPost(
     readonly text: string;
     readonly channel?: string | undefined;
     readonly kind?: AgySwarmPostKind;
+    readonly briefTarget?: string | undefined;
     readonly now: string;
   },
 ): StoredPost | { readonly refused: string } {
   const author = memberByName(swarm, input.from);
   const channel =
-    input.channel ?? author?.channels.find((name) => name !== MAIN_CHANNEL) ?? MAIN_CHANNEL;
+    input.channel ??
+    (author?.role === "coordinator"
+      ? MAIN_CHANNEL
+      : (author?.channels.find((name) => name !== MAIN_CHANNEL) ?? MAIN_CHANNEL));
   const target = swarm.channels.find((candidate) => candidate.name === channel);
   if (target === undefined) return { refused: `Channel #${channel} does not exist.` };
   if (target.archived) return { refused: `Channel #${channel} is archived.` };
   if (/(^|[^\w@])@#main\b/u.test(input.text)) {
     return { refused: "@#main is refused: use @all to address everyone." };
   }
+  const kind = input.kind ?? "post";
   const post: StoredPost = {
     seq: head(swarm) + 1,
     from: input.from,
     text: input.text,
-    mentions: parseMentions(swarm, input.text),
+    mentions:
+      kind === "brief" && input.briefTarget !== undefined
+        ? [input.briefTarget]
+        : parseMentions(swarm, input.text),
     channel,
-    kind: input.kind ?? "post",
+    kind,
     createdAt: input.now,
   };
   swarm.posts.push(post);
-  if (author !== undefined) author.lastReadSeq = Math.max(author.lastReadSeq, post.seq);
+  // Advance only when contiguous so posting mid-turn never skips unread posts from peers.
+  if (author !== undefined && author.lastReadSeq === post.seq - 1) {
+    author.lastReadSeq = post.seq;
+  }
   if (
     post.from === COORDINATOR &&
     post.kind === "post" &&
@@ -243,8 +378,10 @@ export function appendPost(
   ) {
     swarm.doneAt = input.now;
   }
-  // A new member's brief means new work on a finished board, as with a second /swarm.
-  if (post.kind === "brief") swarm.doneAt = null;
+  // A new member's brief or a user message addressing someone reopens a finished board.
+  if (post.kind === "brief" || (post.from === "user" && post.mentions.length > 0)) {
+    swarm.doneAt = null;
+  }
   return post;
 }
 
@@ -256,8 +393,10 @@ export function readPosts(
   return swarm.posts
     .filter((post) => post.seq > input.since)
     .filter((post) => {
-      if (input.channel === "*") return reader.role === "coordinator" || visibleTo(reader, post);
-      if (input.channel !== undefined) return post.channel === input.channel;
+      if (input.channel === "*") return visibleTo(reader, post);
+      if (input.channel !== undefined) {
+        return post.channel === input.channel && visibleTo(reader, post);
+      }
       return visibleTo(reader, post);
     })
     .slice(0, input.limit);

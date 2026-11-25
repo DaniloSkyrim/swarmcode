@@ -1,6 +1,8 @@
 {
   "forkFiles": [
     ".github/README.md",
+    "apps/mobile/src/features/threads/ThreadSwarmBar.tsx",
+    "apps/mobile/src/features/threads/ThreadSwarmSheet.tsx",
     "apps/mobile/src/features/threads/agy-slash-commands.ts",
     "apps/mobile/src/state/agySwarm.ts",
     "apps/server/src/agy/agyPromptExpansion.test.ts",
@@ -13,10 +15,12 @@
     "apps/server/src/agy/swarm/swarmBoard.test.ts",
     "apps/server/src/agy/swarm/swarmBoard.ts",
     "apps/server/src/mcp/toolkits/swarm/handlers.ts",
+    "apps/server/src/mcp/toolkits/swarm/tools.test.ts",
     "apps/server/src/mcp/toolkits/swarm/tools.ts",
     "apps/web/src/agy/ProceedPlanButton.tsx",
     "apps/web/src/agy/agyMenuItems.ts",
     "apps/web/src/agy/useAgyUiCommands.ts",
+    "apps/web/src/components/swarm/SwarmAddWorkerDialog.tsx",
     "apps/web/src/components/swarm/SwarmPanel.tsx",
     "apps/web/src/components/swarm/ThreadSwarmSection.tsx",
     "apps/web/src/components/swarm/SwarmMemberModelControls.tsx",
@@ -37,9 +41,22 @@
     {
       "file": "packages/contracts/src/rpc.ts",
       "snippets": [
-        "import { AgyWsSwarmActiveSubscribeRpc, AgyWsSwarmSubscribeRpc } from \"./agy.ts\";",
         "  AgyWsSwarmSubscribeRpc,",
-        "  AgyWsSwarmActiveSubscribeRpc,"
+        "  AgyWsSwarmActiveSubscribeRpc,",
+        "  AgyWsSwarmPostRpc,",
+        "  AgyWsSwarmKillRpc,",
+        "  AgyWsSwarmRetryRpc,",
+        "  AgyWsSwarmAddRpc,",
+        "  AgyWsSwarmLoadPostsRpc,"
+      ]
+    },
+    {
+      "file": "packages/contracts/src/clientRpcPermissions.ts",
+      "snippets": [
+        "[AGY_WS_METHODS.swarmPost]: AuthOrchestrationOperateScope,",
+        "[AGY_WS_METHODS.swarmKill]: AuthOrchestrationOperateScope,",
+        "[AGY_WS_METHODS.swarmRetry]: AuthOrchestrationOperateScope,",
+        "[AGY_WS_METHODS.swarmAdd]: AuthOrchestrationOperateScope,"
       ]
     },
     {
@@ -58,16 +75,37 @@
       "snippets": [
         "[AGY_WS_METHODS.swarmSubscribe]",
         "[AGY_WS_METHODS.swarmActiveSubscribe]",
+        "[AGY_WS_METHODS.swarmPost]",
+        "[AGY_WS_METHODS.swarmKill]",
+        "[AGY_WS_METHODS.swarmRetry]",
+        "[AGY_WS_METHODS.swarmAdd]",
+        "[AGY_WS_METHODS.swarmLoadPosts]",
         "Layer.succeed(AgySwarm.AgySwarm, agySwarm.value)"
       ]
     },
     {
       "file": "apps/server/src/auth/RpcAuthorization.ts",
-      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]", "[AGY_WS_METHODS.swarmActiveSubscribe]"]
+      "snippets": [
+        "[AGY_WS_METHODS.swarmSubscribe]",
+        "[AGY_WS_METHODS.swarmActiveSubscribe]",
+        "[AGY_WS_METHODS.swarmPost]",
+        "[AGY_WS_METHODS.swarmKill]",
+        "[AGY_WS_METHODS.swarmRetry]",
+        "[AGY_WS_METHODS.swarmAdd]",
+        "[AGY_WS_METHODS.swarmLoadPosts]"
+      ]
     },
     {
       "file": "apps/server/src/observability/RpcInstrumentation.ts",
-      "snippets": ["[AGY_WS_METHODS.swarmSubscribe]", "[AGY_WS_METHODS.swarmActiveSubscribe]"]
+      "snippets": [
+        "[AGY_WS_METHODS.swarmSubscribe]",
+        "[AGY_WS_METHODS.swarmActiveSubscribe]",
+        "[AGY_WS_METHODS.swarmPost]",
+        "[AGY_WS_METHODS.swarmKill]",
+        "[AGY_WS_METHODS.swarmRetry]",
+        "[AGY_WS_METHODS.swarmAdd]",
+        "[AGY_WS_METHODS.swarmLoadPosts]"
+      ]
     },
     {
       "file": "apps/server/src/mcp/McpHttpServer.ts",
@@ -254,6 +292,18 @@
         "useActiveSwarmStartedAt(thread.environmentId, thread.id)",
         "msg(\"Swarming\", { $context: \"thread status\" })"
       ]
+    },
+    {
+      "file": "apps/mobile/src/Stack.tsx",
+      "snippets": ["ThreadSwarm: createNativeStackScreen({"]
+    },
+    {
+      "file": "apps/mobile/src/features/layout/workspace-overlay-routes.ts",
+      "snippets": ["\"ThreadSwarm\","]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
+      "snippets": ["<ThreadSwarmBar"]
     }
   ]
 }

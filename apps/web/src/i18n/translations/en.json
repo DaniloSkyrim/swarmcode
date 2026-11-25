@@ -13099,5 +13099,102 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "de18c637464e9176": "Could not add worker. Try again.",
+  "417f23747ac0f35c": "Added @{name}",
+  "56abae51b99f3dba": "e.g. reviewer, api-fix",
+  "cb7d6ce510a12c32": "What this worker owns and what done looks like",
+  "b2c8c86e8c2b2be9": "Inherit coordinator",
+  "125addc6fac9b3d3": "src/api/, tests/",
+  "727e53eb39e3910b": "Add worker",
+  "d28af59d7036e323": "Spawn a new member on this swarm board with its own brief.",
+  "3b44181e59c42a72": "Use lowercase letters, digits, hyphens, or underscores.",
+  "e7a6d2021d64fce6": "A member with that name already exists.",
+  "2f574d35aa75abef": "Shared workspace",
+  "9d1f16eb5fc3032d": "Isolated worktree",
+  "caf92721748cf4ab": "Model (optional)",
+  "dc9f8eeaaeb6103a": "Owned paths (optional)",
+  "844d0b58acce190d": "Adding…",
+  "7d19513b9e1b1cb9": "Couldn't post to board",
+  "635d97eaf5d8e771": "Posted #{seq}",
+  "c61f31ebf32773e2": "Target channel",
+  "d763e7c48f085137": "Message the board… (@coordinator, @all)",
+  "499b1ba99457a7aa": "Message the board",
+  "628b5de0dc7ca310": "Send board message",
+  "60ecd3de5070307a": "Send (Enter)",
+  "91ceeec5840117b4": "Couldn't load earlier posts",
+  "e2f5a3551c85ac34": "You",
+  "71b44975254c7bfd": "Post in channel",
+  "69c4d1cb556c5904": "Loading earlier posts…",
+  "e72242c6b8db2a1f": [
+    "Load earlier posts (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "e7f0a92a0c0da9a7": "worktree",
+  "db99673a5f25c3c3": "{first} +{rest}",
+  "af1b37a01a6b26ba": "{count, plural, one {{count} turn} other {{count} turns}}",
+  "97c014a817bf2845": "Input: {input} · Output: {output}",
+  "4ff2a699dd32d778": "Retry {member}",
+  "a67be476c196d34f": "Wake {member}",
+  "d1157dcb753c9598": "Retry member",
+  "6e51111247efbce4": "Wake member",
+  "20bbd872379d8100": "Retire {member}",
+  "3d454ff1a3f4792e": "Retire worker",
+  "fabd636fe5020e51": "Couldn't wake @{member}",
+  "0029a9a0af2c8320": "Woke @{member}",
+  "44822684f05eb14e": "This worktree has uncommitted changes.",
+  "43053ae366166787": "Couldn't retire @{member}",
+  "923eb65a3ee940a9": "Retired @{member}",
+  "8501e981379fc5b4": [
+    "Discard uncommitted changes for @",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "eb8965e524258c99": [
+    "Retire @",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "?"
+  ],
+  "5ed9a8b872c56cac": "This stops the worker permanently and removes its isolated worktree if clean.",
+  "9fc4afb489987671": "This stops the worker permanently. Its conversation history stays readable.",
+  "ee7dea2fd6c4d68d": "Retiring…",
+  "d938697812076574": "Force retire & discard",
+  "49f2fe9ca2f6b449": "Retire worker",
+  "085d2c50d1879087": "Total: {tokens} tokens",
+  "5605bf27d006d0c7": "Cached: {cached} · Reasoning: {reasoning}",
+  "f85ac44fc54e71db": "Add worker",
+  "13b07c7e03c12047": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "t · ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "864819bb76a28d7c": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "t"
+  ]
 }

@@ -1,20 +1,33 @@
+import { useAtomValue } from "@effect/atom-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { AgySwarmPost, AgySwarmSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   ArrowDownToLineIcon,
   ArrowRightIcon,
+  ChevronUpIcon,
+  HashIcon,
   InfoIcon,
   ListFilterIcon,
   SearchIcon,
+  SendHorizontalIcon,
   TriangleAlertIcon,
+  UserIcon,
   XIcon,
 } from "lucide-react";
-import { T, useGT } from "gt-react";
-import { memo, useRef, useState } from "react";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { type KeyboardEvent, memo, useRef, useState } from "react";
 
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { agySwarmEnvironment } from "~/state/agySwarm";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { formatShortTimestamp } from "~/timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
 import { Badge } from "../ui/badge";
@@ -31,6 +44,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Textarea } from "../ui/textarea";
+import { toastManager } from "../ui/toast";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SwarmAvatar } from "./SwarmAvatar";
@@ -39,9 +54,10 @@ import {
   firstUnreadSeq,
   MAIN_CHANNEL,
   memberBee,
-  postCue,
+  mergePosts,
   NO_POST_FILTER,
   postBody,
+  postCue,
   visibleChannels,
   type BeeColors,
   type BeeCue,
@@ -116,10 +132,21 @@ function PostRowView(props: {
         <PostNotice post={post} timestampFormat={props.timestampFormat} />
       ) : (
         <div className="flex gap-3 px-4 py-2.5">
-          <SwarmAvatar bee={props.bee} cue={props.cue} className="-mt-0.5" />
+          {post.from === "user" ? (
+            <span
+              aria-hidden
+              className="-mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground"
+            >
+              <UserIcon className="size-3.5" />
+            </span>
+          ) : (
+            <SwarmAvatar bee={props.bee} cue={props.cue} className="-mt-0.5" />
+          )}
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <div className="flex min-h-6 min-w-0 items-center gap-1.5 text-sm">
-              <span className="shrink-0 font-semibold text-foreground">@{post.from}</span>
+              <span className="shrink-0 font-semibold text-foreground">
+                {post.from === "user" ? <T>You</T> : `@${post.from}`}
+              </span>
               {post.kind === "brief" ? (
                 <Badge variant="outline" size="sm" className="shrink-0">
                   <T>Brief</T>
@@ -285,6 +312,167 @@ function BoardFilterMenu(props: {
   );
 }
 
+function BoardComposer(props: {
+  swarm: AgySwarmSnapshot;
+  threadRef: ScopedThreadRef;
+  defaultChannel: string;
+  onPosted: () => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [draft, setDraft] = useState("");
+  const [channelOverride, setChannelOverride] = useState<{
+    swarmId: string;
+    channel: string;
+  } | null>(null);
+  const [sending, setSending] = useState(false);
+
+  const postToBoard = useOrchestrationCommand(agySwarmEnvironment.post, {
+    label: "post to swarm board",
+  });
+
+  const channels = visibleChannels(props.swarm);
+  const activeChannel =
+    channelOverride?.swarmId === props.swarm.id && channels.includes(channelOverride.channel)
+      ? channelOverride.channel
+      : channels.includes(props.defaultChannel)
+        ? props.defaultChannel
+        : MAIN_CHANNEL;
+
+  const insertMention = (token: string) => {
+    const prefix = `@${token} `;
+    setDraft((current) => {
+      if (current.includes(`@${token}`)) return current;
+      const trimmed = current.trimStart();
+      return trimmed.length === 0 ? prefix : `${prefix}${trimmed}`;
+    });
+    textareaRef.current?.focus();
+  };
+
+  const handleSubmit = async () => {
+    const trimmed = draft.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    const result = await postToBoard({
+      environmentId: props.threadRef.environmentId,
+      input: {
+        threadId: props.threadRef.threadId,
+        text: trimmed,
+        channel: activeChannel,
+      },
+    });
+    setSending(false);
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) return;
+      toastManager.add({
+        type: "error",
+        title: gt("Couldn't post to board"),
+        description: thrownErrorMessage(squashAtomCommandFailure(result), m) ?? gt("Try again."),
+      });
+      return;
+    }
+    setDraft("");
+    props.onPosted();
+    if (result.value.note) {
+      toastManager.add({
+        type: "info",
+        title: gt("Posted #{seq}", { seq: result.value.seq }),
+        description: result.value.note,
+      });
+    }
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    void handleSubmit();
+  };
+
+  const quickMentions = ["coordinator", "all"];
+
+  return (
+    <div className="shrink-0 border-t border-border/60 px-3 pt-2.5 pb-3.5">
+      <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto">
+        {channels.length > 1 ? (
+          <Menu>
+            <MenuTrigger
+              render={<Button variant="outline" size="xs" aria-label={gt("Target channel")} />}
+            >
+              <HashIcon />
+              <span>{activeChannel}</span>
+            </MenuTrigger>
+            <MenuPopup align="start" side="top">
+              <MenuRadioGroup
+                value={activeChannel}
+                onValueChange={(next) =>
+                  setChannelOverride({ swarmId: props.swarm.id, channel: String(next) })
+                }
+              >
+                <MenuGroupLabel>
+                  <T>Post in channel</T>
+                </MenuGroupLabel>
+                {channels.map((channel) => (
+                  <MenuRadioItem key={channel} value={channel}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">#{channel}</span>
+                      <MenuRadioItemIndicator />
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </Menu>
+        ) : null}
+        {quickMentions.map((token) => (
+          <Button
+            key={token}
+            type="button"
+            variant="outline"
+            size="xs"
+            disabled={sending}
+            onClick={() => insertMention(token)}
+          >
+            @{token}
+          </Button>
+        ))}
+      </div>
+      <div className="flex items-end gap-1.5">
+        <div className="min-w-0 flex-1">
+          <Textarea
+            ref={textareaRef}
+            size="sm"
+            rows={1}
+            value={draft}
+            disabled={sending}
+            placeholder={gt("Message the board… (@coordinator, @all)")}
+            aria-label={gt("Message the board")}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onKeyDown={onKeyDown}
+          />
+        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="default"
+                size="icon-sm"
+                aria-label={gt("Send board message")}
+                disabled={sending || draft.trim().length === 0}
+                onClick={() => void handleSubmit()}
+              />
+            }
+          >
+            <SendHorizontalIcon />
+          </TooltipTrigger>
+          <TooltipPopup>{gt("Send (Enter)")}</TooltipPopup>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
 export function SwarmBoard(props: {
   swarm: AgySwarmSnapshot;
   threadRef: ScopedThreadRef;
@@ -294,13 +482,37 @@ export function SwarmBoard(props: {
   onFollowChange: (follow: boolean) => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const listRef = useRef<LegendListRef | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
   // Only posts that land while the board is open animate their sender's bee.
   const [openedSeq] = useState(props.swarm.head);
+  const [history, setHistory] = useState<{
+    swarmId: string;
+    posts: ReadonlyArray<AgySwarmPost>;
+    hasMore: boolean;
+    loading: boolean;
+  }>({ swarmId: props.swarm.id, posts: [], hasMore: true, loading: false });
+
+  const canPost = useAtomValue(
+    agySwarmEnvironment.post.permissionAtom(props.threadRef.environmentId),
+  );
+  const loadOlderCommand = useAtomCommand(agySwarmEnvironment.loadPosts, {
+    label: "load earlier swarm posts",
+  });
+
   const { filter, onFilterChange } = props;
-  const posts = filterPosts(props.swarm, filter);
+  const olderPosts = history.swarmId === props.swarm.id ? history.posts : [];
+  const historyHasMore = history.swarmId === props.swarm.id ? history.hasMore : true;
+  const loadingOlder = history.swarmId === props.swarm.id && history.loading;
+  const allPosts = mergePosts(olderPosts, props.swarm.posts);
+  const earliestSeq = allPosts[0]?.seq ?? props.swarm.oldestIncludedSeq ?? 0;
+  const totalPostCount = props.swarm.totalPostCount ?? props.swarm.posts.length;
+  const remainingCount = Math.max(0, totalPostCount - allPosts.length);
+  const canLoadEarlier = historyHasMore && earliestSeq > 1 && remainingCount > 0;
+
+  const posts = filterPosts(props.swarm, filter, allPosts);
   const unreadSeq = firstUnreadSeq(props.swarm, props.threadRef.threadId, posts);
   const scoped = filter.member !== null || filter.channel !== null;
   const toggleExpanded = (seq: number) =>
@@ -312,6 +524,43 @@ export function SwarmBoard(props: {
   const setFollow = (follow: boolean) => {
     props.onFollowChange(follow);
     if (follow) void listRef.current?.scrollToEnd({ animated: false });
+  };
+
+  const handleLoadEarlier = async () => {
+    if (!canLoadEarlier || loadingOlder) return;
+    const swarmId = props.swarm.id;
+    setHistory((current) => ({
+      swarmId,
+      posts: current.swarmId === swarmId ? current.posts : [],
+      hasMore: current.swarmId === swarmId ? current.hasMore : true,
+      loading: true,
+    }));
+    const result = await loadOlderCommand({
+      environmentId: props.threadRef.environmentId,
+      input: {
+        threadId: props.threadRef.threadId,
+        beforeSeq: earliestSeq,
+        limit: 100,
+      },
+    });
+    if (result._tag === "Failure") {
+      setHistory((current) =>
+        current.swarmId === swarmId ? { ...current, loading: false } : current,
+      );
+      if (isAtomCommandInterrupted(result)) return;
+      toastManager.add({
+        type: "error",
+        title: gt("Couldn't load earlier posts"),
+        description: thrownErrorMessage(squashAtomCommandFailure(result), m) ?? gt("Try again."),
+      });
+      return;
+    }
+    setHistory((current) => ({
+      swarmId,
+      posts: mergePosts(result.value.posts, current.swarmId === swarmId ? current.posts : []),
+      hasMore: result.value.hasMore,
+      loading: false,
+    }));
   };
 
   return (
@@ -375,14 +624,34 @@ export function SwarmBoard(props: {
           </Button>
         </div>
       ) : null}
+      {canLoadEarlier ? (
+        <div className="flex shrink-0 justify-center px-4 pb-1">
+          <Button
+            type="button"
+            variant="ghost-muted"
+            size="xs"
+            disabled={loadingOlder}
+            onClick={() => void handleLoadEarlier()}
+          >
+            <ChevronUpIcon />
+            {loadingOlder ? (
+              <T>Loading earlier posts…</T>
+            ) : (
+              <T>
+                Load earlier posts (<Var>{remainingCount}</Var>)
+              </T>
+            )}
+          </Button>
+        </div>
+      ) : null}
       {posts.length === 0 ? (
         <Empty size="compact">
           <EmptyHeader>
             <EmptyTitle>
-              {props.swarm.posts.length === 0 ? <T>No posts yet</T> : <T>No matching posts</T>}
+              {allPosts.length === 0 ? <T>No posts yet</T> : <T>No matching posts</T>}
             </EmptyTitle>
             <EmptyDescription>
-              {props.swarm.posts.length === 0 ? (
+              {allPosts.length === 0 ? (
                 <T>Posts show up here as the agents write them.</T>
               ) : (
                 <T>Try another search or filter.</T>
@@ -417,6 +686,14 @@ export function SwarmBoard(props: {
           className="min-h-0 flex-1 overscroll-contain pb-2"
         />
       )}
+      {canPost ? (
+        <BoardComposer
+          swarm={props.swarm}
+          threadRef={props.threadRef}
+          defaultChannel={filter.channel ?? MAIN_CHANNEL}
+          onPosted={() => setFollow(true)}
+        />
+      ) : null}
     </div>
   );
 }
