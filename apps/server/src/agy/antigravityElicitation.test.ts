@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeAntigravityAcpAdapterFlavor } from "../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import {
   ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS,
+  ANTIGRAVITY_ORTHOGRAPHY_INSTRUCTIONS,
   appendAntigravitySessionInstructions,
   extractAntigravityElicitationForm,
   parseAntigravityQuestionOption,
@@ -311,5 +312,6 @@ describe("extractAntigravityElicitationForm", () => {
     const appended = appendAntigravitySessionInstructions(PULL_REQUEST_LINKING_INSTRUCTIONS);
     expect(appended).toContain(PULL_REQUEST_LINKING_INSTRUCTIONS);
     expect(appended).toContain(ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS);
+    expect(appended).toContain(ANTIGRAVITY_ORTHOGRAPHY_INSTRUCTIONS);
   });
 });
