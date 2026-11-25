@@ -15,8 +15,12 @@ export const ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS = `<ask_question_formatting>
 When calling \`ask_question\`, format each option as \`Short label: brief description explaining what it does or its trade-off\`. Use \`: \` to separate the concise label from the description.
 </ask_question_formatting>`;
 
+export const ANTIGRAVITY_ORTHOGRAPHY_INSTRUCTIONS = `<response_orthography>
+When replying in a non-English language (such as Portuguese, Spanish, French, or German), always use proper native orthography, diacritics, and punctuation (e.g., \`á, é, í, ó, ú, â, ê, ô, ã, õ, ç\`, \`não\`, \`função\`, \`também\`). Never drop accents or fall back to ASCII-only prose, even when reading code or comments written without accents.
+</response_orthography>`;
+
 export function appendAntigravitySessionInstructions(base: string): string {
-  return `${base}\n\n${ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS}`;
+  return `${base}\n\n${ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS}\n\n${ANTIGRAVITY_ORTHOGRAPHY_INSTRUCTIONS}`;
 }
 
 const isForm = Schema.is(
