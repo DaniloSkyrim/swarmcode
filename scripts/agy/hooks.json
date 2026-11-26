@@ -254,7 +254,8 @@
       "file": "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts",
       "snippets": [
         "appendAntigravitySessionInstructions(",
-        "extractElicitationForm: extractAntigravityElicitationForm,"
+        "extractUpstreamAntigravityElicitationForm(request),",
+        "} from \"../../agy/antigravityElicitation.ts\";"
       ]
     },
     {

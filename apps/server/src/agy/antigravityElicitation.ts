@@ -8,7 +8,7 @@ const HEADER_LIMIT = 120;
 const OPTION_LABEL_LIMIT = 512;
 const QUESTION_TEXT_LIMIT = 8_000;
 const SHORT_SEPARATOR_LABEL_LIMIT = 80;
-const QUESTION_ID_PATTERN = /^q[1-9]\d*$/;
+const QUESTION_ID_PATTERN = /^q(?:0|[1-9]\d*)$/;
 const COMPANION_SUFFIX = "_other";
 
 export const ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS = `<ask_question_formatting>

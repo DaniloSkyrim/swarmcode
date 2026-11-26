@@ -314,7 +314,13 @@ export function resolveWorkEntryToolPresentation(
     entry.toolData,
     resolve,
   );
-  if (definition === null || presentation === null || failed || status !== "completed") {
+  if (
+    definition === null ||
+    definition.summaryAction === null ||
+    presentation === null ||
+    failed ||
+    status !== "completed"
+  ) {
     return presentation;
   }
   const outcomeLabel = t3ToolOutcomeLabel(

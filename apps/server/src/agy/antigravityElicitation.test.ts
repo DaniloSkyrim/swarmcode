@@ -308,7 +308,16 @@ describe("extractAntigravityElicitationForm", () => {
       withProcess: (_stop, task) => task,
       defaultModel: Effect.undefined,
     });
-    expect(flavor.extractElicitationForm).toBe(extractAntigravityElicitationForm);
+    // The fork's parser runs first and keeps its label split; upstream's takes shapes it rejects.
+    const forkShaped = request({ q1: singleQuestion, q1_other: singleCompanion });
+    expect(flavor.extractElicitationForm?.(forkShaped)?.questions[0]?.options[0]?.label).toBe(
+      "Working (Recommended)",
+    );
+    const upstreamOnly = request({
+      answer: { type: "string", title: "Pick one", oneOf: [{ const: "a", title: "A" }] },
+    });
+    expect(extractAntigravityElicitationForm(upstreamOnly)).toBeUndefined();
+    expect(flavor.extractElicitationForm?.(upstreamOnly)).toBeDefined();
     const appended = appendAntigravitySessionInstructions(PULL_REQUEST_LINKING_INSTRUCTIONS);
     expect(appended).toContain(PULL_REQUEST_LINKING_INSTRUCTIONS);
     expect(appended).toContain(ANTIGRAVITY_ASK_QUESTION_INSTRUCTIONS);

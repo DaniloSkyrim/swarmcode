@@ -56,7 +56,7 @@ import {
   antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
-  extractAntigravityElicitationForm,
+  extractAntigravityElicitationForm as extractUpstreamAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
   makeAntigravityUpdateStepsPlans,
@@ -353,7 +353,9 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
-    extractElicitationForm: extractAntigravityElicitationForm,
+    extractElicitationForm: (request) =>
+      extractAntigravityElicitationForm(request) ??
+      extractUpstreamAntigravityElicitationForm(request),
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
