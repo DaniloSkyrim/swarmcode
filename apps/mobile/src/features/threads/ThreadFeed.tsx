@@ -2763,6 +2763,25 @@ type UserMessageContentProps = {
   readonly renderImage: MarkdownImageRenderer;
 };
 
+const MOBILE_SWARM_COMMAND_HREF = "t3-swarm://command";
+const MOBILE_SWARM_COMMAND_RE = /(^|[\s([{"'])(\/swarm)(?=$|[\s.,!?;:)\]}"'])/gi;
+
+function highlightMobileSwarmCommand(markdown: string): string {
+  if (!markdown.toLowerCase().includes("/swarm")) return markdown;
+  // Split out fenced code blocks and inline code spans so `/swarm` inside code stays untouched.
+  return markdown
+    .split(/(```[\s\S]*?```|`[^`\n]+`)/g)
+    .map((part, index) =>
+      index % 2 === 1
+        ? part
+        : part.replace(
+            MOBILE_SWARM_COMMAND_RE,
+            (_, prefix: string, cmd: string) => `${prefix}[${cmd}](${MOBILE_SWARM_COMMAND_HREF})`,
+          ),
+    )
+    .join("");
+}
+
 function UserMessageContent(props: UserMessageContentProps) {
   const gt = useGT();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
@@ -2778,12 +2797,15 @@ function UserMessageContent(props: UserMessageContentProps) {
     ),
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
-  const text = replaceComposerContextReferences(liveText, (ref) => {
-    const available = props.context?.records.some((record) => record.contextId === ref.contextId);
-    const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
-    return `[${label}](t3-context://v1/${ref.kind}/${ref.contextId})`;
-  });
+  const text = highlightMobileSwarmCommand(
+    replaceComposerContextReferences(liveText, (ref) => {
+      const available = props.context?.records.some((record) => record.contextId === ref.contextId);
+      const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
+      return `[${label}](t3-context://v1/${ref.kind}/${ref.contextId})`;
+    }),
+  );
   const onLinkPress = (href: string) => {
+    if (href === MOBILE_SWARM_COMMAND_HREF) return;
     const reference = parseComposerContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
     const record = props.context?.records.find(
@@ -2823,6 +2845,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           ...props.linkHandlers,
           onLinkPress,
           fileContextMenu: (href) => {
+            if (href === MOBILE_SWARM_COMMAND_HREF) return undefined;
             const reference = parseComposerContextHref(href);
             if (!reference) return props.linkHandlers.fileContextMenu(href);
             const record = props.context?.records.find(

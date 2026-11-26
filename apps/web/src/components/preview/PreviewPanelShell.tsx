@@ -188,6 +188,7 @@ function PreviewPanelShellFrame(
       }
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
+      data-right-panel-shell={isInline ? "true" : undefined}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
       {/* Content stays pinned to the right edge, so closing uncovers the chat

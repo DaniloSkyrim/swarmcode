@@ -233,6 +233,7 @@ import {
   nodeToPlainText,
 } from "./chat/MarkdownCodeBlock.logic";
 import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
+import { hasSwarmCommand } from "./swarm/swarmCommandHighlight";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
@@ -594,6 +595,7 @@ function useChatMarkdownState(
     headingLevelOffset = 0,
     sourceControlMedia = false,
     sourceControlMediaRepository,
+    extensions = NO_EXTENSIONS,
   }: ChatMarkdownProps,
   streamingBlocks: ReadonlyArray<string> | null,
 ) {
@@ -1120,6 +1122,7 @@ function useChatMarkdownState(
     pullRequestsEnabled,
     issuesEnabled,
     skills,
+    highlightSwarmCommand: extensions.userMessage === true,
     threadRef,
     updateThreadPullRequestLink,
   };
@@ -1182,10 +1185,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <div {...props}>{children}</div>;
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    const { skills, highlightSwarmCommand, threadRef, environmentId } = use(
+      ChatMarkdownRendererContext,
+    );
     return (
       <p {...props}>
-        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderSkillInlineMarkdownChildren(
+          children,
+          skills,
+          threadRef,
+          environmentId,
+          highlightSwarmCommand,
+        )}
       </p>
     );
   },
@@ -1226,12 +1237,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
-    const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
+    const { skills, highlightSwarmCommand, threadRef, environmentId } = use(
+      ChatMarkdownRendererContext,
+    );
     // Resolve checkbox markers by offset to avoid rerendering list items on every streamed token.
     const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
       <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
-        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderSkillInlineMarkdownChildren(
+          children,
+          skills,
+          threadRef,
+          environmentId,
+          highlightSwarmCommand,
+        )}
       </li>
     );
   },
@@ -1949,15 +1968,20 @@ function hastClassName(node: HastElement): string | undefined {
 
 // Paragraphs and list items turn skill and model mentions in their text into chips, except in
 // code and links, as SkillInlineText does.
-function hastTextHasChip(node: HastElement, skills: ReadonlyArray<ServerProviderSkill>): boolean {
+function hastTextHasChip(
+  node: HastElement,
+  skills: ReadonlyArray<ServerProviderSkill>,
+  highlightSwarmCommand: boolean,
+): boolean {
   return node.children.some((child) =>
     child.type === "text"
       ? (skills.length > 0 && !matchInlineSkills(child.value, skills).next().done) ||
-        collectComposerModelMentions(child.value).length > 0
+        collectComposerModelMentions(child.value).length > 0 ||
+        (highlightSwarmCommand && hasSwarmCommand(child.value))
       : child.type === "element" &&
         child.tagName !== "code" &&
         child.tagName !== "a" &&
-        hastTextHasChip(child, skills),
+        hastTextHasChip(child, skills, highlightSwarmCommand),
   );
 }
 
@@ -1979,6 +2003,7 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
     inlineCodeFileLinkMetaByText,
     onTaskListChange,
     skills,
+    highlightSwarmCommand,
   } = state;
   const options: MarkdownIslandOptions = {
     components: CHAT_MARKDOWN_COMPONENTS,
@@ -2007,7 +2032,7 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
         }
         case "p":
         case "li":
-          return hastTextHasChip(node, skills);
+          return hastTextHasChip(node, skills, highlightSwarmCommand);
         default:
           return false;
       }
@@ -2100,7 +2125,7 @@ function ChatMarkdown({
       ? (splitMarkdownBlocks(text) ?? [text])
       : null;
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
-    useChatMarkdownState({ text, inline, ...props }, streamingBlocks);
+    useChatMarkdownState({ text, inline, extensions, ...props }, streamingBlocks);
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;

@@ -13,6 +13,7 @@ import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIcon } from "../lib/markdownLinkIcons";
+import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { resolveMarkdownFileIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
@@ -69,6 +70,12 @@ function presentation(
 ): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
+  if (url === "t3-swarm://command") {
+    return {
+      label: "/swarm",
+      chip: { accent: "#8b5cf6", tintsIcon: false },
+    };
+  }
   const citation = parseAssistantCitationHref(url);
   if (citation)
     return {
@@ -171,6 +178,7 @@ export function useEnrichedLinkVariants(
           const chipForeground = chipForegrounds.get(url);
           const icon = icons.get(url);
           const inlineIconUri = link.label === undefined && icon?.iconUri;
+          const isSwarmCommand = url === "t3-swarm://command";
           return [
             enrichedLinkVariantPattern(url),
             {
@@ -178,17 +186,21 @@ export function useEnrichedLinkVariants(
                 ? { inlineIcon: { iconUri: inlineIconUri, iconTintColor: icon.iconTintColor } }
                 : {
                     pill: {
-                      borderColor: "transparent",
-                      borderWidth: 0,
-                      borderRadius: 6,
-                      paddingHorizontal: 5,
-                      paddingVertical: 2,
+                      borderColor: isSwarmCommand
+                        ? themeColorWithAlpha("#8b5cf6", 0.28)
+                        : "transparent",
+                      borderWidth: isSwarmCommand ? 1 : 0,
+                      borderRadius: isSwarmCommand ? 5 : 6,
+                      paddingHorizontal: isSwarmCommand ? 4 : 5,
+                      paddingVertical: isSwarmCommand ? 1 : 2,
                     },
                   }),
               fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
               color: chipForeground ?? link.color ?? textStyle.fileTextColor,
               underline: false,
-              backgroundColor: "transparent",
+              backgroundColor: isSwarmCommand
+                ? themeColorWithAlpha("#8b5cf6", 0.16)
+                : "transparent",
             },
           ];
         }),

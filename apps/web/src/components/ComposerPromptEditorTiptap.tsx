@@ -63,6 +63,7 @@ import {
   expandCollapsedComposerCursor,
   pastedPathQueryLength,
 } from "~/composer-logic";
+import { findSwarmCommandRanges } from "./swarm/swarmCommandHighlight";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { preserveReadingPosition } from "~/lib/preserveReadingPosition";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
@@ -799,6 +800,45 @@ function chipSelectionDecorations({ doc, selection }: EditorState): DecorationSe
   return DecorationSet.create(doc, decorations);
 }
 
+const SwarmCommandPluginKey = new PluginKey<DecorationSet>("composer-swarm-command-highlight");
+
+const ComposerSwarmCommandHighlightExtension = Extension.create({
+  name: "composer-swarm-command-highlight",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<DecorationSet>({
+        key: SwarmCommandPluginKey,
+        state: {
+          init: (_, state) => swarmCommandDecorations(state),
+          apply: (tr, old, _, state) => (tr.docChanged ? swarmCommandDecorations(state) : old),
+        },
+        props: {
+          decorations: (state) => SwarmCommandPluginKey.getState(state),
+        },
+      }),
+    ];
+  },
+});
+
+function swarmCommandDecorations({ doc }: EditorState): DecorationSet {
+  const decorations: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.spec.code === true) return false;
+    if (!node.isText || !node.text) return true;
+    if (node.marks.some((mark) => mark.type.name === "code")) return true;
+    for (const range of findSwarmCommandRanges(node.text)) {
+      decorations.push(
+        Decoration.inline(pos + range.start, pos + range.end, {
+          class: "composer-swarm-command",
+          "data-swarm-command": "true",
+        }),
+      );
+    }
+    return true;
+  });
+  return decorations.length === 0 ? DecorationSet.empty : DecorationSet.create(doc, decorations);
+}
+
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
 const SILENT_SELECTION_META = "composerSilentSelection";
@@ -896,6 +936,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerChipSelectionExtension,
+    ComposerSwarmCommandHighlightExtension,
     ...(richText
       ? [
           ComposerMarkdownSourceExtension,

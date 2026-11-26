@@ -18,9 +18,11 @@ import {
   needsInputMembers,
   nextNeedsInputMember,
   NO_POST_FILTER,
+  overviewWorkers,
   parseDelimitedList,
   postBody,
   postCue,
+  previewWorkerBees,
   QUEEN_BEE,
   visibleChannels,
 } from "./swarmBoard.logic";
@@ -282,5 +284,27 @@ describe("swarm board logic", () => {
         ],
       }),
     ).toEqual({ total: 3, fixed: 1, clean: 1, running: 1 });
+  });
+
+  it("orders overview workers alphabetically with retired last and pads preview bees", () => {
+    const roster = [
+      member("coordinator", { state: "waiting" }),
+      member("zeta", { state: "working" }),
+      member("old-a", { state: "killed" }),
+      member("alpha", { state: "waiting" }),
+      member("old-b", { state: "killed" }),
+    ];
+    expect(overviewWorkers(roster).map((entry) => entry.name)).toEqual([
+      "alpha",
+      "zeta",
+      "old-a",
+      "old-b",
+    ]);
+
+    const few = [member("coordinator"), member("alpha")];
+    const bees = previewWorkerBees(few, 3);
+    expect(bees).toHaveLength(3);
+    expect(bees[0]).toBe(memberBee(few, "alpha"));
+    expect(bees.every((bee) => !bee.queen)).toBe(true);
   });
 });

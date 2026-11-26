@@ -40,7 +40,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 
 type SwarmTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
-type SwarmTab = "board" | "members" | "overview";
+type SwarmTab = "overview" | "board" | "members";
+const MOBILE_VISIBLE_WORKERS = 5;
 
 const VALID_MEMBER_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/u;
 const LEADING_MENTION = /^\s*@(#?[a-z][a-z0-9_-]*)[\s,:]*/u;
@@ -131,6 +132,31 @@ function parseOwnedPaths(raw: string): string[] {
   return items;
 }
 
+function mobileMemberSnippet(member: AgySwarmMember, posts: ReadonlyArray<AgySwarmPost>): string {
+  if ((member.state === "working" || member.state === "stopped") && member.activity) {
+    return member.activity.replace(/\s+/gu, " ").trim();
+  }
+  if (member.lastPostSeq === null) return "";
+  const last = posts.findLast((post) => post.seq === member.lastPostSeq);
+  if (last === undefined) return "";
+  return stripLeadingMentions(last).replace(/\s+/gu, " ").trim();
+}
+
+function mobileOverviewWorkers(
+  members: ReadonlyArray<AgySwarmMember>,
+): ReadonlyArray<AgySwarmMember> {
+  const live: AgySwarmMember[] = [];
+  const retired: AgySwarmMember[] = [];
+  for (const member of members) {
+    if (member.role === "coordinator") continue;
+    if (member.state === "killed") retired.push(member);
+    else live.push(member);
+  }
+  live.sort((left, right) => left.name.localeCompare(right.name));
+  retired.sort((left, right) => left.name.localeCompare(right.name));
+  return [...live, ...retired];
+}
+
 export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
   const target = route.params;
   const navigation = useNavigation();
@@ -138,7 +164,7 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
   const gt = useGT();
   const resolve = useMessages();
   const { swarm, loaded, error } = useAgySwarm(target.environmentId, target.threadId);
-  const [selectedTab, setSelectedTab] = useState<SwarmTab>("board");
+  const [selectedTab, setSelectedTab] = useState<SwarmTab>("overview");
   const [addingWorker, setAddingWorker] = useState(false);
 
   const canPost = useAtomValue(agySwarmEnvironment.post.permissionAtom(target.environmentId));
@@ -213,6 +239,10 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
 
   const tabOptions: Array<{ readonly value: SwarmTab; readonly label: string }> = [
     {
+      value: "overview",
+      label: `${gt("Overview")}${overviewProgress}`,
+    },
+    {
       value: "board",
       label: swarm ? `${gt("Board")} (${swarm.head})` : gt("Board"),
     },
@@ -222,13 +252,10 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
         ? `${gt("Members")} (${swarm.members.filter((m) => m.state !== "killed").length})`
         : gt("Members"),
     },
-    ...(swarm?.plan
-      ? [{ value: "overview" as const, label: `${gt("Overview")}${overviewProgress}` }]
-      : []),
   ];
   const activeTab: SwarmTab = tabOptions.some((option) => option.value === selectedTab)
     ? selectedTab
-    : "board";
+    : "overview";
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -299,6 +326,10 @@ export function ThreadSwarmSheet({ route }: StaticScreenProps<SwarmTarget>) {
         ) : (
           <MobileSwarmOverview
             swarm={swarm}
+            currentThreadId={target.threadId}
+            resolveStateLabel={(state) => resolve(MEMBER_STATE_LABELS[state])}
+            onOpenMember={openMemberThread}
+            onOpenBoard={() => setSelectedTab("board")}
             tabHeader={
               <View className="pb-3">
                 <SegmentedControl
@@ -806,54 +837,514 @@ function MobileSwarmMembers(props: {
 
 function MobileSwarmOverview(props: {
   readonly swarm: AgySwarmSnapshot;
+  readonly currentThreadId: ThreadId;
+  readonly resolveStateLabel: (state: AgySwarmMemberState) => string;
+  readonly onOpenMember: (member: AgySwarmMember) => void;
+  readonly onOpenBoard: () => void;
   readonly tabHeader: React.ReactNode;
 }) {
+  const gt = useGT();
   const resolve = useMessages();
   const insets = useSafeAreaInsets();
+  const [selection, setSelection] = useState<{ swarmId: string; name: string | null }>({
+    swarmId: props.swarm.id,
+    name: null,
+  });
+  const [expandedState, setExpandedState] = useState<{ swarmId: string; expanded: boolean }>({
+    swarmId: props.swarm.id,
+    expanded: false,
+  });
+
   const plan = props.swarm.plan;
+  const coordinator = props.swarm.members.find((member) => member.role === "coordinator");
+  const workers = mobileOverviewWorkers(props.swarm.members);
+  const selectedName = selection.swarmId === props.swarm.id ? selection.name : null;
+  const selectedWorker =
+    selectedName === null ? null : (workers.find((worker) => worker.name === selectedName) ?? null);
+  const expanded = expandedState.swarmId === props.swarm.id ? expandedState.expanded : false;
+  const setSelectedWorker = (name: string | null) =>
+    setSelection({ swarmId: props.swarm.id, name });
+  const setExpanded = (next: boolean) =>
+    setExpandedState({ swarmId: props.swarm.id, expanded: next });
+
+  const hasOverflow = workers.length > MOBILE_VISIBLE_WORKERS;
+  const visibleWorkers =
+    expanded || !hasOverflow ? workers : workers.slice(0, MOBILE_VISIBLE_WORKERS);
+  const hiddenCount = workers.length - visibleWorkers.length;
+
+  const workingCount = props.swarm.members.filter((member) => member.state === "working").length;
+  const liveCount = props.swarm.members.filter((member) => member.state !== "killed").length;
+
+  const coordinatorSleeping =
+    coordinator !== undefined &&
+    (coordinator.state === "waiting" || coordinator.state === "stopped");
+  const coordinatorSnippet = coordinator
+    ? mobileMemberSnippet(coordinator, props.swarm.posts) ||
+      (coordinator.state === "working"
+        ? gt("Planning and delegating tasks")
+        : gt("Waiting for worker updates"))
+    : "";
+  const isCurrentCoordinator = coordinator?.threadId === props.currentThreadId;
+
   const milestones = plan?.milestones ?? [];
-  const rounds = plan?.rounds ?? [];
+  const allRounds = plan?.rounds ?? [];
   const artifacts = plan?.artifacts ?? [];
   const passedMilestones = milestones.filter((milestone) => milestone.status === "passed").length;
+  const plannedWorkers = new Set(plan?.threads.flatMap((group) => group.tasks) ?? []);
+  const allUnthreaded = plan
+    ? Object.entries(plan.tasks).filter(([worker]) => !plannedWorkers.has(worker))
+    : [];
+
+  const visibleRounds = selectedWorker
+    ? allRounds.filter((entry) => entry.worker === selectedWorker.name)
+    : allRounds;
+  const visibleThreads = plan
+    ? selectedWorker
+      ? plan.threads.filter((group) => group.tasks.includes(selectedWorker.name))
+      : plan.threads
+    : [];
+  const visibleUnthreaded = selectedWorker
+    ? allUnthreaded.filter(([worker]) => worker === selectedWorker.name)
+    : allUnthreaded;
+
+  const selectedTask = selectedWorker ? plan?.tasks[selectedWorker.name] : undefined;
+  const selectedSnippet = selectedWorker
+    ? mobileMemberSnippet(selectedWorker, props.swarm.posts)
+    : "";
+
   return (
     <ScrollView
       nestedScrollEnabled
       className="flex-1"
       contentInsetAdjustmentBehavior="automatic"
-      contentContainerClassName="gap-3 px-5 pt-2"
+      contentContainerClassName="gap-4 px-5 pt-2"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
       {props.tabHeader}
-      {plan === null ? null : (
-        <>
-          <View className="gap-1.5 rounded-2xl bg-subtle px-4 py-3">
-            <View className="flex-row flex-wrap items-center gap-1.5">
-              <Text className="text-sm font-t3-bold text-foreground">{plan.goal.title}</Text>
-              {plan.mode ? (
-                <View className="rounded-md bg-screen px-1.5 py-0.5">
-                  <Text className="text-[11px] font-t3-medium text-foreground-muted">
-                    {plan.mode}
-                  </Text>
-                </View>
-              ) : null}
-              {plan.integrityMode ? (
-                <View className="rounded-md bg-screen px-1.5 py-0.5">
-                  <Text className="text-[11px] font-t3-medium text-foreground">
-                    {resolve(INTEGRITY_LABELS[plan.integrityMode])}
-                  </Text>
-                </View>
-              ) : null}
+
+      {plan === null ? (
+        <View className="items-center gap-4 rounded-2xl border border-border bg-subtle/60 px-4 py-5">
+          <View className="flex-row items-center gap-3">
+            <View className="size-12 items-center justify-center rounded-xl border border-border bg-warning">
+              <SymbolView
+                name="point.3.connected.trianglepath.dotted"
+                size={22}
+                tintColorClassName="accent-warning-foreground"
+              />
             </View>
-            {plan.goal.line ? (
-              <Text className="text-xs text-foreground-muted">{plan.goal.line}</Text>
-            ) : null}
-            {plan.projectDir ? (
-              <Text numberOfLines={1} className="font-mono text-xs text-foreground-muted">
-                {plan.projectDir}
-              </Text>
-            ) : null}
+            <SymbolView name="arrow.right" size={14} tintColorClassName="accent-foreground-muted" />
+            <View className="flex-row items-center gap-1.5">
+              <View className="size-8 items-center justify-center rounded-lg bg-adaptive-emerald-500-a12-a16">
+                <SymbolView
+                  name="person.crop.circle"
+                  size={15}
+                  tintColorClassName="accent-foreground"
+                />
+              </View>
+              <View className="size-8 items-center justify-center rounded-lg bg-adaptive-violet-500-a12-a16">
+                <SymbolView
+                  name="person.crop.circle"
+                  size={15}
+                  tintColorClassName="accent-foreground"
+                />
+              </View>
+              <View className="size-8 items-center justify-center rounded-lg bg-screen">
+                <SymbolView
+                  name="person.crop.circle"
+                  size={15}
+                  tintColorClassName="accent-foreground"
+                />
+              </View>
+            </View>
           </View>
 
+          <Text className="text-center text-base font-t3-bold text-foreground">
+            {props.swarm.doneAt !== null ? <T>Swarm finished</T> : <T>Your swarm is starting</T>}
+          </Text>
+
+          <View className="w-full gap-3">
+            <View className="flex-row items-center gap-3">
+              <View className="size-9 items-center justify-center rounded-lg border border-border bg-screen">
+                <SymbolView name="target" size={16} tintColorClassName="accent-foreground" />
+              </View>
+              <View className="min-w-0 flex-1">
+                <Text className="text-xs font-t3-bold text-foreground">
+                  <T>One goal</T>
+                </Text>
+                <Text className="text-xs text-foreground-muted">
+                  <T>The coordinator splits it into tasks.</T>
+                </Text>
+              </View>
+            </View>
+            <View className="flex-row items-center gap-3">
+              <View className="size-9 items-center justify-center rounded-lg border border-border bg-screen">
+                <SymbolView name="person.2" size={16} tintColorClassName="accent-foreground" />
+              </View>
+              <View className="min-w-0 flex-1">
+                <Text className="text-xs font-t3-bold text-foreground">
+                  <T>Many workers</T>
+                </Text>
+                <Text className="text-xs text-foreground-muted">
+                  <T>Each takes a task, and they run in parallel.</T>
+                </Text>
+              </View>
+            </View>
+            <View className="flex-row items-center gap-3">
+              <View className="size-9 items-center justify-center rounded-lg border border-border bg-screen">
+                <SymbolView
+                  name="bubble.left.and.bubble.right"
+                  size={16}
+                  tintColorClassName="accent-foreground"
+                />
+              </View>
+              <View className="min-w-0 flex-1">
+                <Text className="text-xs font-t3-bold text-foreground">
+                  <T>One board</T>
+                </Text>
+                <Text className="text-xs text-foreground-muted">
+                  <T>Updates land here. You step in only when asked.</T>
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {props.swarm.doneAt === null ? (
+            <Text className="text-center text-xs font-t3-medium text-foreground-muted">
+              <T>Waiting for the first update</T>
+            </Text>
+          ) : null}
+        </View>
+      ) : (
+        <View className="gap-1.5 rounded-2xl border border-border bg-subtle px-4 py-3">
+          <View className="flex-row flex-wrap items-center gap-1.5">
+            <Text className="text-sm font-t3-bold text-foreground">{plan.goal.title}</Text>
+            {plan.mode ? (
+              <View className="rounded-md bg-screen px-1.5 py-0.5">
+                <Text className="text-[11px] font-t3-medium text-foreground-muted">
+                  {plan.mode}
+                </Text>
+              </View>
+            ) : null}
+            {plan.integrityMode ? (
+              <View className="rounded-md bg-screen px-1.5 py-0.5">
+                <Text className="text-[11px] font-t3-medium text-foreground">
+                  {resolve(INTEGRITY_LABELS[plan.integrityMode])}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          {plan.goal.line ? (
+            <Text className="text-xs text-foreground-muted">{plan.goal.line}</Text>
+          ) : null}
+          {plan.projectDir ? (
+            <Text numberOfLines={1} className="font-mono text-xs text-foreground-muted">
+              {plan.projectDir}
+            </Text>
+          ) : null}
+          {milestones.length > 0 ? (
+            <View className="flex-row items-center gap-2 pt-1">
+              <View className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-screen">
+                <View
+                  className="h-full rounded-full bg-adaptive-emerald-600-400"
+                  style={{ width: `${Math.round((passedMilestones / milestones.length) * 100)}%` }}
+                />
+              </View>
+              <Text className="font-mono text-xs tabular-nums text-foreground-muted">
+                {passedMilestones}/{milestones.length}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+
+      <View className="gap-2.5">
+        <View className="flex-row items-center justify-between px-1">
+          <Text className="text-xs font-t3-medium text-foreground-muted">
+            <T>The team</T>
+          </Text>
+          <Text className="font-mono text-xs tabular-nums text-foreground-muted">
+            {workingCount > 0 ? gt("{count} working", { count: workingCount }) : liveCount}
+          </Text>
+        </View>
+
+        {coordinator ? (
+          <Pressable
+            disabled={isCurrentCoordinator}
+            accessibilityRole={isCurrentCoordinator ? undefined : "button"}
+            onPress={() => props.onOpenMember(coordinator)}
+            className="flex-row items-center gap-3 rounded-2xl border border-border bg-subtle/70 p-3 active:opacity-80"
+          >
+            <View className="relative size-14 items-center justify-center rounded-xl border border-border bg-warning">
+              <SymbolView
+                name="point.3.connected.trianglepath.dotted"
+                size={24}
+                tintColorClassName="accent-warning-foreground"
+              />
+              {coordinatorSleeping ? (
+                <View className="absolute top-1 left-1">
+                  <SymbolView name="moon" size={10} tintColorClassName="accent-foreground-muted" />
+                </View>
+              ) : null}
+              {coordinator.state === "working" ? (
+                <View className="absolute top-1 right-1 size-2.5 rounded-full bg-adaptive-emerald-600-400" />
+              ) : coordinator.state === "needs-input" ? (
+                <View className="absolute top-1 right-1 size-2.5 rounded-full bg-warning-foreground" />
+              ) : null}
+            </View>
+            <View className="min-w-0 flex-1 gap-0.5">
+              <View className="flex-row items-center gap-2">
+                <Text className="text-sm font-t3-bold text-foreground">
+                  <T>Coordinator</T>
+                </Text>
+                {coordinator.state === "working" || coordinator.state === "needs-input" ? (
+                  <Text
+                    className={cn(
+                      "text-xs",
+                      coordinator.state === "needs-input"
+                        ? "font-t3-medium text-warning-foreground"
+                        : "text-foreground-muted",
+                    )}
+                  >
+                    {props.resolveStateLabel(coordinator.state)}
+                  </Text>
+                ) : null}
+              </View>
+              <Text numberOfLines={2} className="text-xs text-foreground-muted">
+                {coordinatorSnippet}
+              </Text>
+            </View>
+            {!isCurrentCoordinator ? (
+              <SymbolView
+                name="chevron.right"
+                size={12}
+                tintColorClassName="accent-foreground-muted"
+              />
+            ) : null}
+          </Pressable>
+        ) : null}
+
+        {workers.length > 0 ? (
+          <View className="flex-row flex-wrap gap-2">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: selectedWorker === null }}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setSelectedWorker(null);
+              }}
+              className="w-15 items-center gap-1"
+            >
+              <View
+                className={cn(
+                  "rounded-2xl border-2 p-0.5",
+                  selectedWorker === null ? "border-foreground" : "border-transparent",
+                )}
+              >
+                <View className="size-12 items-center justify-center rounded-xl border border-border bg-subtle">
+                  <SymbolView name="person.2" size={18} tintColorClassName="accent-foreground" />
+                </View>
+              </View>
+              <Text
+                numberOfLines={1}
+                className={cn(
+                  "text-[11px]",
+                  selectedWorker === null
+                    ? "font-t3-medium text-foreground"
+                    : "text-foreground-muted",
+                )}
+              >
+                <T>All</T>
+              </Text>
+            </Pressable>
+
+            {visibleWorkers.map((worker) => {
+              const selected = selectedWorker?.name === worker.name;
+              const sleeping = worker.state === "waiting" || worker.state === "stopped";
+              return (
+                <Pressable
+                  key={worker.name}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    setSelectedWorker(selected ? null : worker.name);
+                  }}
+                  className="w-15 items-center gap-1"
+                >
+                  <View
+                    className={cn(
+                      "rounded-2xl border-2 p-0.5",
+                      selected ? "border-foreground" : "border-transparent",
+                    )}
+                  >
+                    <View
+                      className={cn(
+                        "relative size-12 items-center justify-center rounded-xl border border-border bg-subtle",
+                        worker.state === "killed" && "opacity-55",
+                      )}
+                    >
+                      <Text className="text-sm font-t3-bold text-foreground">
+                        {worker.name.slice(0, 2).toUpperCase()}
+                      </Text>
+                      {sleeping ? (
+                        <View className="absolute top-1 left-1">
+                          <SymbolView
+                            name="moon"
+                            size={9}
+                            tintColorClassName="accent-foreground-muted"
+                          />
+                        </View>
+                      ) : null}
+                      {worker.state === "working" ? (
+                        <View className="absolute top-1 right-1 size-2.5 rounded-full bg-adaptive-emerald-600-400" />
+                      ) : worker.state === "needs-input" ? (
+                        <View className="absolute top-1 right-1 size-2.5 rounded-full bg-warning-foreground" />
+                      ) : null}
+                    </View>
+                  </View>
+                  <Text
+                    numberOfLines={1}
+                    className={cn(
+                      "w-full text-center text-[11px]",
+                      selected ? "font-t3-medium text-foreground" : "text-foreground-muted",
+                    )}
+                  >
+                    {worker.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+
+            {!expanded && hiddenCount > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={gt(
+                  "{count, plural, one {Show {count} more worker} other {Show {count} more workers}}",
+                  { count: hiddenCount },
+                )}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setExpanded(true);
+                }}
+                className="w-15 items-center gap-1"
+              >
+                <View className="rounded-2xl border-2 border-transparent p-0.5">
+                  <View className="size-12 items-center justify-center rounded-xl border border-border bg-subtle/60">
+                    <Text className="text-sm font-t3-medium tabular-nums text-foreground-muted">
+                      +{hiddenCount}
+                    </Text>
+                  </View>
+                </View>
+                <Text numberOfLines={1} className="text-[11px] text-foreground-muted">
+                  <T>More</T>
+                </Text>
+              </Pressable>
+            ) : null}
+
+            {expanded && hasOverflow ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={gt("Show fewer workers")}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setExpanded(false);
+                }}
+                className="w-15 items-center gap-1"
+              >
+                <View className="rounded-2xl border-2 border-transparent p-0.5">
+                  <View className="size-12 items-center justify-center rounded-xl border border-border bg-subtle/60">
+                    <SymbolView
+                      name="chevron.up"
+                      size={16}
+                      tintColorClassName="accent-foreground-muted"
+                    />
+                  </View>
+                </View>
+                <Text numberOfLines={1} className="text-[11px] text-foreground-muted">
+                  <T>Less</T>
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
+        {selectedWorker ? (
+          <View className="gap-2 rounded-2xl border border-border bg-subtle/70 p-3.5">
+            <View className="flex-row items-center justify-between gap-2">
+              <View className="min-w-0 flex-1 flex-row flex-wrap items-center gap-1.5">
+                <Text numberOfLines={1} className="text-sm font-t3-bold text-foreground">
+                  @{selectedWorker.name}
+                </Text>
+                {selectedWorker.canManage && selectedWorker.role !== "coordinator" ? (
+                  <View className="rounded-md bg-screen px-1.5 py-0.5">
+                    <Text className="text-[11px] font-t3-medium text-foreground">
+                      <T>Manager</T>
+                    </Text>
+                  </View>
+                ) : null}
+                {selectedWorker.readOnly ? (
+                  <View className="rounded-md bg-screen px-1.5 py-0.5">
+                    <Text className="text-[11px] font-t3-medium text-foreground-muted">
+                      <T>Read-only</T>
+                    </Text>
+                  </View>
+                ) : null}
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selectedWorker.state === "needs-input"
+                      ? "font-t3-medium text-warning-foreground"
+                      : "text-foreground-muted",
+                  )}
+                >
+                  {props.resolveStateLabel(selectedWorker.state)}
+                </Text>
+              </View>
+              <IconButton
+                icon="xmark"
+                accessibilityLabel={gt("Show all workers")}
+                onPress={() => setSelectedWorker(null)}
+              />
+            </View>
+            {selectedWorker.model ? (
+              <Text numberOfLines={1} className="font-mono text-xs text-foreground-muted">
+                {selectedWorker.model}
+              </Text>
+            ) : null}
+            {selectedTask ? <Text className="text-xs text-foreground">{selectedTask}</Text> : null}
+            {selectedSnippet && selectedSnippet !== selectedTask ? (
+              <Text numberOfLines={3} className="text-xs text-foreground-muted">
+                {selectedSnippet}
+              </Text>
+            ) : !selectedTask ? (
+              <Text className="text-xs text-foreground-muted">
+                <T>No updates posted yet.</T>
+              </Text>
+            ) : null}
+            <View className="flex-row flex-wrap items-center gap-2 pt-1">
+              {selectedWorker.threadId !== props.currentThreadId ? (
+                <Button
+                  label={gt("Open thread")}
+                  icon="arrow.up.right"
+                  tone="secondary"
+                  size="compact"
+                  onPress={() => props.onOpenMember(selectedWorker)}
+                />
+              ) : null}
+              <Button
+                label={gt("View on board")}
+                icon="bubble.left.and.bubble.right"
+                tone="text"
+                size="compact"
+                onPress={props.onOpenBoard}
+              />
+            </View>
+          </View>
+        ) : null}
+      </View>
+
+      {plan === null ? null : (
+        <>
           {milestones.length > 0 ? (
             <View className="gap-2">
               <View className="flex-row items-center justify-between px-1">
@@ -894,17 +1385,17 @@ function MobileSwarmOverview(props: {
             </View>
           ) : null}
 
-          {rounds.length > 0 ? (
+          {visibleRounds.length > 0 ? (
             <View className="gap-2">
               <View className="flex-row items-center justify-between px-1">
                 <Text className="text-xs font-t3-medium text-foreground-muted">
                   <T>Boost rounds</T>
                 </Text>
                 <Text className="font-mono text-xs tabular-nums text-foreground-muted">
-                  {rounds.length}
+                  {visibleRounds.length}
                 </Text>
               </View>
-              {rounds.map((entry) => (
+              {visibleRounds.map((entry) => (
                 <View key={entry.round} className="gap-1 rounded-2xl bg-subtle/60 px-4 py-2.5">
                   <View className="flex-row items-center justify-between gap-2">
                     <Text className="font-mono text-xs font-t3-medium text-foreground">
@@ -955,19 +1446,37 @@ function MobileSwarmOverview(props: {
             </View>
           ) : null}
 
-          {plan.threads.map((group) => (
-            <View key={group.id} className="gap-1.5 rounded-2xl bg-subtle/60 px-4 py-3">
-              <Text className="text-sm font-t3-medium text-foreground">{group.title}</Text>
-              {group.goal ? (
-                <Text className="text-xs text-foreground-muted">{group.goal}</Text>
-              ) : null}
-              {group.tasks.map((taskKey) => (
-                <Text key={taskKey} className="text-xs text-foreground-muted">
-                  • {plan.tasks[taskKey] ?? taskKey}
+          {visibleThreads.map((group) => {
+            const groupTasks = selectedWorker
+              ? group.tasks.filter((taskKey) => taskKey === selectedWorker.name)
+              : group.tasks;
+            return (
+              <View key={group.id} className="gap-1.5 rounded-2xl bg-subtle/60 px-4 py-3">
+                <Text className="text-sm font-t3-medium text-foreground">{group.title}</Text>
+                {group.goal ? (
+                  <Text className="text-xs text-foreground-muted">{group.goal}</Text>
+                ) : null}
+                {groupTasks.map((taskKey) => (
+                  <Text key={taskKey} className="text-xs text-foreground-muted">
+                    • {plan.tasks[taskKey] ?? taskKey}
+                  </Text>
+                ))}
+              </View>
+            );
+          })}
+
+          {visibleUnthreaded.length > 0 ? (
+            <View className="gap-1.5 rounded-2xl bg-subtle/60 px-4 py-3">
+              <Text className="text-xs font-t3-medium text-foreground-muted">
+                <T>Tasks</T>
+              </Text>
+              {visibleUnthreaded.map(([worker, task]) => (
+                <Text key={worker} className="text-xs text-foreground-muted">
+                  • @{worker}: {task}
                 </Text>
               ))}
             </View>
-          ))}
+          ) : null}
         </>
       )}
     </ScrollView>

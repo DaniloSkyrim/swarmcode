@@ -11,39 +11,121 @@ const COORDINATOR = "coordinator";
 export interface BeeColors {
   readonly queen: boolean;
   readonly tile: string;
+  readonly border: string;
+  readonly dot: string;
   readonly head: string;
   readonly body: string;
   readonly outline: string;
 }
 
-const worker = (tile: string, head: string, body: string, outline: string): BeeColors => ({
+const worker = (
+  tile: string,
+  border: string,
+  dot: string,
+  head: string,
+  body: string,
+  outline: string,
+): BeeColors => ({
   queen: false,
   tile,
+  border,
+  dot,
   head,
   body,
   outline,
 });
 
 // Literal classes so Tailwind sees them. Amber is the queen's alone, as in the app icon.
-const WORKER_BEES: ReadonlyArray<BeeColors> = [
-  worker("bg-sky-500/15", "fill-sky-300", "fill-sky-400", "fill-sky-900"),
-  worker("bg-violet-500/15", "fill-violet-300", "fill-violet-400", "fill-violet-900"),
-  worker("bg-emerald-500/15", "fill-emerald-300", "fill-emerald-400", "fill-emerald-900"),
-  worker("bg-rose-500/15", "fill-rose-300", "fill-rose-400", "fill-rose-900"),
-  worker("bg-teal-500/15", "fill-teal-300", "fill-teal-400", "fill-teal-900"),
-  worker("bg-fuchsia-500/15", "fill-fuchsia-300", "fill-fuchsia-400", "fill-fuchsia-900"),
-  worker("bg-lime-500/15", "fill-lime-300", "fill-lime-400", "fill-lime-900"),
-  worker("bg-indigo-500/15", "fill-indigo-300", "fill-indigo-400", "fill-indigo-900"),
-  worker("bg-orange-500/15", "fill-orange-300", "fill-orange-400", "fill-orange-900"),
+export const WORKER_BEES: ReadonlyArray<BeeColors> = [
+  worker(
+    "bg-sky-500/15",
+    "border-sky-500/25",
+    "fill-sky-400",
+    "fill-sky-300",
+    "fill-sky-400",
+    "fill-sky-900",
+  ),
+  worker(
+    "bg-violet-500/15",
+    "border-violet-500/25",
+    "fill-violet-400",
+    "fill-violet-300",
+    "fill-violet-400",
+    "fill-violet-900",
+  ),
+  worker(
+    "bg-emerald-500/15",
+    "border-emerald-500/25",
+    "fill-emerald-400",
+    "fill-emerald-300",
+    "fill-emerald-400",
+    "fill-emerald-900",
+  ),
+  worker(
+    "bg-rose-500/15",
+    "border-rose-500/25",
+    "fill-rose-400",
+    "fill-rose-300",
+    "fill-rose-400",
+    "fill-rose-900",
+  ),
+  worker(
+    "bg-teal-500/15",
+    "border-teal-500/25",
+    "fill-teal-400",
+    "fill-teal-300",
+    "fill-teal-400",
+    "fill-teal-900",
+  ),
+  worker(
+    "bg-fuchsia-500/15",
+    "border-fuchsia-500/25",
+    "fill-fuchsia-400",
+    "fill-fuchsia-300",
+    "fill-fuchsia-400",
+    "fill-fuchsia-900",
+  ),
+  worker(
+    "bg-lime-500/15",
+    "border-lime-500/25",
+    "fill-lime-400",
+    "fill-lime-300",
+    "fill-lime-400",
+    "fill-lime-900",
+  ),
+  worker(
+    "bg-indigo-500/15",
+    "border-indigo-500/25",
+    "fill-indigo-400",
+    "fill-indigo-300",
+    "fill-indigo-400",
+    "fill-indigo-900",
+  ),
+  worker(
+    "bg-orange-500/15",
+    "border-orange-500/25",
+    "fill-orange-400",
+    "fill-orange-300",
+    "fill-orange-400",
+    "fill-orange-900",
+  ),
 ];
 
 export const QUEEN_BEE: BeeColors = {
   queen: true,
   tile: "bg-amber-500/20",
+  border: "border-amber-500/25",
+  dot: "fill-amber-400",
   head: "fill-amber-300",
   body: "fill-amber-400",
   outline: "fill-amber-900",
 };
+
+const PREVIEW_FALLBACK_BEES: ReadonlyArray<BeeColors> = [
+  WORKER_BEES[3]!,
+  WORKER_BEES[0]!,
+  WORKER_BEES[1]!,
+];
 
 function nameHash(name: string): number {
   let hash = 0;
@@ -456,4 +538,40 @@ export function boostRoundProgress(plan: AgySwarmPlan | null): BoostRoundProgres
     else if (round.status === "running") running += 1;
   }
   return { total: rounds.length, fixed, clean, running };
+}
+
+export const OVERVIEW_VISIBLE_WORKERS = 5;
+
+/** Non-coordinator members for Overview's team strip: live workers alphabetically, then retired. */
+export function overviewWorkers(
+  members: ReadonlyArray<AgySwarmMember>,
+): ReadonlyArray<AgySwarmMember> {
+  const live: AgySwarmMember[] = [];
+  const retired: AgySwarmMember[] = [];
+  for (const member of members) {
+    if (member.role === "coordinator") continue;
+    if (member.state === "killed") retired.push(member);
+    else live.push(member);
+  }
+  live.sort((left, right) => left.name.localeCompare(right.name));
+  retired.sort((left, right) => left.name.localeCompare(right.name));
+  return [...live, ...retired];
+}
+
+/** First `count` workers' bees for the hero diagram and All cluster tile, padded with defaults. */
+export function previewWorkerBees(
+  members: ReadonlyArray<AgySwarmMember>,
+  count = 3,
+): ReadonlyArray<BeeColors> {
+  const workers = overviewWorkers(members);
+  const bees: BeeColors[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const workerMember = workers[index];
+    bees.push(
+      workerMember
+        ? memberBee(members, workerMember.name)
+        : PREVIEW_FALLBACK_BEES[index % PREVIEW_FALLBACK_BEES.length]!,
+    );
+  }
+  return bees;
 }

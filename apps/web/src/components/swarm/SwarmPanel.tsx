@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
   AgySwarmKind,
+  AgySwarmMember,
   AgySwarmMetrics,
   EnvironmentId,
   ScopedThreadRef,
@@ -39,10 +40,10 @@ import {
 } from "./swarmBoard.logic";
 
 const VIEW_LABELS = {
+  overview: msg("Overview", { $context: "swarm tab, the coordinator's plan" }),
   board: msg("Board", { $context: "swarm tab, the message board" }),
   members: msg("Members", { $context: "swarm tab" }),
   graph: msg("Graph", { $context: "swarm tab, who mentioned whom" }),
-  overview: msg("Overview", { $context: "swarm tab, the coordinator's plan" }),
 } as const;
 type SwarmView = keyof typeof VIEW_LABELS;
 
@@ -58,7 +59,7 @@ const lastViewByThread = new Map<string, SwarmView>();
 
 function rememberView(viewKey: string, view: SwarmView) {
   lastViewByThread.delete(viewKey);
-  if (view === "board") return;
+  if (view === "overview") return;
   lastViewByThread.set(viewKey, view);
   if (lastViewByThread.size > MAX_REMEMBERED_VIEWS) {
     const oldest = lastViewByThread.keys().next().value;
@@ -145,7 +146,7 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
   const viewKey = `${props.environmentId}:${props.threadRef.threadId}`;
   const [viewState, setViewState] = useState<{ key: string; view: SwarmView } | null>(null);
   const selectedView =
-    viewState?.key === viewKey ? viewState.view : (lastViewByThread.get(viewKey) ?? "board");
+    viewState?.key === viewKey ? viewState.view : (lastViewByThread.get(viewKey) ?? "overview");
   const setView = (next: SwarmView) => {
     rememberView(viewKey, next);
     setViewState({ key: viewKey, view: next });
@@ -193,26 +194,29 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
   const waitingInput = needsInputMembers(swarm.members);
   const jumpShortcut = shortcutLabelForCommand(keybindings, "swarm.jumpNeedsInput");
   const kindLabel = KIND_LABELS[swarm.kind];
-  const handleJumpNeedsInput = () => {
-    const target =
-      nextNeedsInputMember(swarm.members, props.threadRef.threadId) ?? waitingInput[0] ?? null;
-    if (target === null) return;
+  const openMember = (member: AgySwarmMember, intent: "primary" | "alternate" = "primary") => {
     openSideThread({
-      threadRef: scopeThreadRef(props.environmentId, target.threadId),
+      threadRef: scopeThreadRef(props.environmentId, member.threadId),
       panelRef: props.threadRef,
-      intent: "primary",
+      intent,
       navigate: (next) =>
         void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(next) }),
     });
   };
+  const handleJumpNeedsInput = () => {
+    const target =
+      nextNeedsInputMember(swarm.members, props.threadRef.threadId) ?? waitingInput[0] ?? null;
+    if (target === null) return;
+    openMember(target, "primary");
+  };
 
   const views: ReadonlyArray<{ key: SwarmView; count: string | number | null }> = [
+    { key: "overview", count: overviewCount },
     { key: "board", count: swarm.head },
     { key: "members", count: liveMemberCount(swarm.members) },
     { key: "graph", count: null },
-    ...(swarm.plan === null ? [] : [{ key: "overview" as const, count: overviewCount }]),
   ];
-  const view = views.some((entry) => entry.key === selectedView) ? selectedView : "board";
+  const view = views.some((entry) => entry.key === selectedView) ? selectedView : "overview";
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
     if (step === 0) return;
@@ -325,6 +329,17 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
         aria-labelledby={`${idBase}-tab-${view}`}
         className="flex min-h-0 flex-1 flex-col"
       >
+        {view === "overview" ? (
+          <SwarmOverview
+            swarm={swarm}
+            threadRef={props.threadRef}
+            onOpenMember={openMember}
+            onFilterBoardByMember={(memberName) => {
+              setFilter({ ...NO_POST_FILTER, member: memberName });
+              setView("board");
+            }}
+          />
+        ) : null}
         {view === "board" ? (
           <SwarmBoard
             swarm={swarm}
@@ -337,9 +352,6 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
         ) : null}
         {view === "members" ? <SwarmMembers swarm={swarm} threadRef={props.threadRef} /> : null}
         {view === "graph" ? <SwarmGraph swarm={swarm} /> : null}
-        {view === "overview" && swarm.plan !== null ? (
-          <SwarmOverview swarm={swarm} plan={swarm.plan} />
-        ) : null}
       </div>
       {canAddWorker ? (
         <SwarmAddWorkerDialog

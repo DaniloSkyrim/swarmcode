@@ -10,6 +10,10 @@ import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
 import { PopoverClose } from "../ui/popover";
+import {
+  findSwarmCommandRanges,
+  SWARM_COMMAND_HIGHLIGHT_CLASS,
+} from "../swarm/swarmCommandHighlight";
 import { ModelMentionChip } from "./ModelMentionChip";
 
 function SkillInlineText(props: {
@@ -17,6 +21,7 @@ function SkillInlineText(props: {
   skills: ReadonlyArray<ServerProviderSkill>;
   threadRef: ScopedThreadRef | undefined;
   environmentId: EnvironmentId | null;
+  highlightSwarmCommand?: boolean | undefined;
 }) {
   const chips: Array<{ start: number; end: number; node: ReactNode }> = [];
   for (const { start, end, skill, rawText } of matchInlineSkills(props.text, props.skills)) {
@@ -49,6 +54,23 @@ function SkillInlineText(props: {
       ),
     });
   }
+  if (props.highlightSwarmCommand) {
+    for (const range of findSwarmCommandRanges(props.text)) {
+      chips.push({
+        start: range.start,
+        end: range.end,
+        node: (
+          <span
+            key={`${range.start}:swarm`}
+            data-swarm-command="true"
+            className={SWARM_COMMAND_HIGHLIGHT_CLASS}
+          >
+            {props.text.slice(range.start, range.end)}
+          </span>
+        ),
+      });
+    }
+  }
   if (chips.length === 0) {
     return <>{props.text}</>;
   }
@@ -74,6 +96,7 @@ export function renderSkillInlineMarkdownChildren(
   skills: ReadonlyArray<ServerProviderSkill>,
   threadRef: ScopedThreadRef | undefined,
   environmentId: EnvironmentId | null,
+  highlightSwarmCommand = false,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
@@ -83,6 +106,7 @@ export function renderSkillInlineMarkdownChildren(
           skills={skills}
           threadRef={threadRef}
           environmentId={environmentId}
+          highlightSwarmCommand={highlightSwarmCommand}
         />
       );
     }
@@ -100,7 +124,13 @@ export function renderSkillInlineMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderSkillInlineMarkdownChildren(child.props.children, skills, threadRef, environmentId),
+      renderSkillInlineMarkdownChildren(
+        child.props.children,
+        skills,
+        threadRef,
+        environmentId,
+        highlightSwarmCommand,
+      ),
     );
   });
 }

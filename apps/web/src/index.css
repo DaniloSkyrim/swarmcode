@@ -2610,6 +2610,24 @@ code {
   pointer-events: none;
 }
 
+.composer-tiptap .composer-swarm-command {
+  color: #7c3aed;
+  background-color: color-mix(in oklab, #8b5cf6 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #8b5cf6 24%, transparent);
+  border-radius: 5px;
+  padding: 0.04em 0.28em;
+  margin: 0 -0.1em;
+  font-weight: 500;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.dark .composer-tiptap .composer-swarm-command {
+  color: #c4b5fd;
+  background-color: color-mix(in oklab, #8b5cf6 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #a78bfa 30%, transparent);
+}
+
 /* Rich-text task lists render as real checkboxes. Tiptap's TaskItem NodeView
    builds the <li> imperatively with only a data-checked attribute (no
    data-type), so items are targeted that way. Indentation comes from list
