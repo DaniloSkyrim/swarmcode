@@ -135,7 +135,11 @@
         "withToolAnalytics(withToolResultCapture(withToolSpans(register))).pipe(withDirectDispatch)",
         "withToolSpans(registerT3Call())",
         "const withDirectDispatch = Effect.fn(\"McpHttpServer.withDirectDispatch\")",
-        "const registerT3Call = Effect.fn(\"McpHttpServer.registerT3Call\")"
+        "const registerT3Call = Effect.fn(\"McpHttpServer.registerT3Call\")",
+        "inputSchema: tool.inputSchema as Record<string, unknown>,",
+        "mode !== \"deferred\" && mode !== \"proxy\"",
+        "target !== McpToolExposure.TOOL_SEARCH && target !== McpToolExposure.T3_CALL",
+        "exposure.isListed(providerSessionId, target, mode)"
       ]
     },
     {
@@ -379,7 +383,8 @@
         "agyView.contentWidthClass,",
         "{agyView.flowPane}",
         "hidden={agyView.flowPane !== null}",
-        "{agyView.pinnedFooter}"
+        "{agyView.pinnedFooter}",
+        ".withoutPinned(visibleModels)"
       ]
     },
     {
@@ -397,7 +402,10 @@
         "<AgyOrchestratorChoicePage",
         "filterAgyOrchestratorEffortChoices(",
         "isAgyOrchestratorSubmenu(submenu)",
-        "onFinishOrchestrator={() => navigation.popTo(\"ThreadSettingsModels\")}"
+        "onFinishOrchestrator={() => navigation.popTo(\"ThreadSettingsModels\")}",
+        "subProviderCatalogItems(session, group, agy.models)",
+        "modelItems(agy.models)",
+        "isAgyOrchestratorSubmenu(submenu)"
       ]
     },
     {
@@ -416,6 +424,7 @@
         "rawEntries.filter(isStandardAntigravityEntry)",
         "standardAntigravityCurrentModel(currentValue, entries)",
         "return withAntigravityOrchestratorModel(",
+        "orchestratorSettings: settings.orchestrator,",
         "orchestratorSettings: settings.orchestrator,"
       ]
     },

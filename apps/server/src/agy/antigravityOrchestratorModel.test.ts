@@ -3,14 +3,19 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_ORCHESTRATOR_MODEL,
   ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS,
+  defaultInstanceIdForDriver,
   ProviderDriverKind,
+  type ServerProvider,
   type ServerProviderModel,
+  type ServerSettings,
 } from "@t3tools/contracts";
 
 import { buildAntigravityModelsFromSession } from "../provider/AntigravityProvider.ts";
+import { hydrateCachedProvider } from "../provider/providerStatusCache.ts";
 import {
   antigravityCatalogModels,
   normalizeAntigravityCatalogModels,
+  withAntigravityCatalog,
 } from "./antigravityOrchestratorModel.ts";
 
 const modelConfig = {
@@ -155,6 +160,20 @@ describe("Antigravity Orchestrator catalog entry", () => {
       isCustom: false,
       capabilities: null,
     });
+    const makeProvider = (driver: ProviderDriverKind, models: ServerProviderModel[]) =>
+      ({
+        instanceId: defaultInstanceIdForDriver(driver),
+        driver,
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-04-11T00:00:00.000Z",
+        models,
+        slashCommands: [],
+        skills: [],
+      }) satisfies ServerProvider;
     const cached = [
       model("gemini-4-neon"),
       model("gemini-4-carbon"),
@@ -163,19 +182,40 @@ describe("Antigravity Orchestrator catalog entry", () => {
       model("gemini-pro-orchestrator"),
       model("gemini-pro-orchestrator-g1-pro"),
     ];
-
-    expect(
-      antigravityCatalogModels({ driver: ProviderDriverKind.make("antigravity") }, cached).map(
-        (entry) => entry.slug,
-      ),
-    ).toEqual([
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const expectedSlugs = [
       "gemini-4-neon",
       "gemini-4-carbon",
       "gemini-4-hydrogen",
       ANTIGRAVITY_ORCHESTRATOR_MODEL,
-    ]);
-    expect(antigravityCatalogModels({ driver: ProviderDriverKind.make("codex") }, cached)).toBe(
-      cached,
+    ];
+
+    const hydrated = hydrateCachedProvider({
+      cachedProvider: makeProvider(antigravity, cached),
+      fallbackProvider: makeProvider(antigravity, []),
+    });
+    expect(hydrated.models.map((entry) => entry.slug)).toEqual(expectedSlugs);
+
+    const provider = makeProvider(antigravity, cached);
+    const settings = {
+      providerInstances: {
+        [provider.instanceId]: {
+          config: { orchestrator: { plannerModel: "gemini-4-carbon", plannerEffort: "high" } },
+        },
+      },
+    } as unknown as ServerSettings;
+    const withSettings = withAntigravityCatalog(provider, settings);
+    expect(withSettings.models.map((entry) => entry.slug)).toEqual(expectedSlugs);
+    const orchestrator = withSettings.models.find(
+      (entry) => entry.slug === ANTIGRAVITY_ORCHESTRATOR_MODEL,
     );
+    expect(orchestrator?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+      id: ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerModel,
+      currentValue: "gemini-4-carbon",
+    });
+
+    const codex = makeProvider(ProviderDriverKind.make("codex"), cached);
+    expect(antigravityCatalogModels(codex, cached)).toBe(cached);
+    expect(withAntigravityCatalog(codex, settings)).toBe(codex);
   });
 });

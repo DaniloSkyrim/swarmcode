@@ -58,8 +58,15 @@ const checkHooks = Effect.gen(function* () {
       problems.push(`missing upstream file: ${hook.file}`);
       continue;
     }
-    for (const snippet of hook.snippets) {
-      if (!source.includes(snippet)) problems.push(`hook missing in ${hook.file}: ${snippet}`);
+    // A snippet listed N times marks N hook sites, so it must appear at least N times.
+    const expected = new Map<string, number>();
+    for (const snippet of hook.snippets) expected.set(snippet, (expected.get(snippet) ?? 0) + 1);
+    for (const [snippet, count] of expected) {
+      const found = source.split(snippet).length - 1;
+      if (found < count) {
+        const sites = count > 1 ? ` (expected ${count} sites, found ${found})` : "";
+        problems.push(`hook missing in ${hook.file}: ${snippet}${sites}`);
+      }
     }
   }
 

@@ -17,7 +17,7 @@ If upstream ships the same feature natively, upstream wins and the fork copy is 
 
 Fork-only files (no upstream conflicts possible): `packages/contracts/src/agy.ts`, `apps/server/src/agy/**`, `apps/server/src/mcp/toolkits/swarm/**`, the web swarm components, and `scripts/agy/**`.
 
-Hook lines in upstream files are kept to one to a few lines each, so merges stay small. The list of files and the literal text each must contain is `scripts/agy/hooks.json`. Add an entry there whenever you add a hook line. `node scripts/agy/check-hooks.ts` fails when a hook is missing.
+Hook lines in upstream files are kept to one to a few lines each, so merges stay small. The list of files and the literal text each must contain is `scripts/agy/hooks.json`. Add an entry there whenever you add a hook line. When the same text marks two hook sites in one file, list the snippet twice: the check then requires two occurrences. `node scripts/agy/check-hooks.ts` fails when a hook is missing.
 
 ## Syncing
 
