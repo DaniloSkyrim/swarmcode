@@ -4,12 +4,19 @@
     "apps/mobile/src/features/threads/ThreadSwarmBar.tsx",
     "apps/mobile/src/features/threads/ThreadSwarmSheet.tsx",
     "apps/mobile/src/features/threads/agy-slash-commands.ts",
+    "apps/mobile/src/features/threads/agyThreadSettingsOrchestrator.tsx",
+    "apps/mobile/src/lib/agyModelOptions.test.ts",
+    "apps/mobile/src/lib/agyModelOptions.ts",
     "apps/mobile/src/state/agySwarm.ts",
     "apps/server/src/agy/agyPromptExpansion.test.ts",
     "apps/server/src/agy/agyPromptExpansion.ts",
     "apps/server/src/agy/agyPrompts.ts",
     "apps/server/src/agy/antigravityElicitation.test.ts",
     "apps/server/src/agy/antigravityElicitation.ts",
+    "apps/server/src/agy/antigravityOrchestratorModel.test.ts",
+    "apps/server/src/agy/antigravityOrchestratorModel.ts",
+    "apps/server/src/agy/mcpT3Call.test.ts",
+    "apps/server/src/agy/mcpT3Call.ts",
     "apps/server/src/agy/swarm/AgySwarm.test.ts",
     "apps/server/src/agy/swarm/AgySwarm.ts",
     "apps/server/src/agy/swarm/swarmBoard.test.ts",
@@ -19,15 +26,17 @@
     "apps/server/src/mcp/toolkits/swarm/tools.ts",
     "apps/web/src/agy/ProceedPlanButton.tsx",
     "apps/web/src/agy/agyMenuItems.ts",
+    "apps/web/src/agy/agyOrchestratorEffort.tsx",
+    "apps/web/src/agy/useAgyOrchestratorPicker.tsx",
     "apps/web/src/agy/useAgyUiCommands.ts",
     "apps/web/src/components/swarm/SwarmAddWorkerDialog.tsx",
     "apps/web/src/components/swarm/SwarmEntranceAnimation.browser.test.tsx",
     "apps/web/src/components/swarm/SwarmEntranceAnimation.tsx",
+    "apps/web/src/components/swarm/SwarmMemberModelControls.tsx",
     "apps/web/src/components/swarm/SwarmOverview.browser.test.tsx",
     "apps/web/src/components/swarm/SwarmPanel.tsx",
     "apps/web/src/components/swarm/SwarmcodeMascotBee.tsx",
     "apps/web/src/components/swarm/ThreadSwarmSection.tsx",
-    "apps/web/src/components/swarm/SwarmMemberModelControls.tsx",
     "apps/web/src/components/swarm/openSwarmSurface.ts",
     "apps/web/src/components/swarm/swarmCommandHighlight.test.ts",
     "apps/web/src/components/swarm/swarmCommandHighlight.ts",
@@ -119,7 +128,15 @@
     },
     {
       "file": "apps/server/src/mcp/McpHttpServer.ts",
-      "snippets": ["layerMilestoneEvents, layerSwarmToolkit"]
+      "snippets": [
+        "layerMilestoneEvents, layerSwarmToolkit",
+        "T3Call.toolExposureField(request.headers[MCP_TOOL_EXPOSURE_HEADER])",
+        ").pipe(withDirectDispatch),",
+        "withToolAnalytics(withToolResultCapture(withToolSpans(register))).pipe(withDirectDispatch)",
+        "withToolSpans(registerT3Call())",
+        "const withDirectDispatch = Effect.fn(\"McpHttpServer.withDirectDispatch\")",
+        "const registerT3Call = Effect.fn(\"McpHttpServer.registerT3Call\")"
+      ]
     },
     {
       "file": "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
@@ -350,6 +367,81 @@
     {
       "file": "apps/mobile/src/native/useEnrichedLinkVariants.ts",
       "snippets": ["if (url === \"t3-swarm://command\") {"]
+    },
+    {
+      "file": "apps/web/src/components/chat/ModelPickerContent.tsx",
+      "snippets": [
+        "useAgyOrchestratorPicker(onInstanceModelChange, searchInputRef)",
+        "agyOrchestrator.close();",
+        "agyOrchestrator.interceptSelect(entry.driverKind, instanceId, resolvedModel)",
+        "agyOrchestrator.view({",
+        ".withoutPinned(visibleModels)",
+        "agyView.contentWidthClass,",
+        "{agyView.flowPane}",
+        "hidden={agyView.flowPane !== null}",
+        "{agyView.pinnedFooter}"
+      ]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
+      "snippets": [
+        "} from \"./agyThreadSettingsOrchestrator\";",
+        "| AgyOrchestratorSubmenu;",
+        "readonly agyOrchestrator: AgyOrchestratorSession;",
+        "const agyOrchestrator = createAgyOrchestratorSession({",
+        "if (agyOrchestrator.applyOptionChange(id, value)) return;",
+        "| AgyOrchestratorCatalogItem",
+        "splitAgyOrchestratorOption(driver, collapsed, provider.models)",
+        "...agy.items,",
+        "<AgyOrchestratorCatalogRow",
+        "<AgyOrchestratorChoicePage",
+        "filterAgyOrchestratorEffortChoices(",
+        "isAgyOrchestratorSubmenu(submenu)",
+        "onFinishOrchestrator={() => navigation.popTo(\"ThreadSettingsModels\")}"
+      ]
+    },
+    {
+      "file": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+      "snippets": [
+        "const agyEffort = describeAgyOrchestratorEffort(traits, size, resolve);",
+        "const agyColumn = useAgyOrchestratorEffortColumn(props.traits, COLUMN_ROW);",
+        "{agyColumn?.heading ??",
+        "{agyColumn ? null : picker.modelLabel}",
+        "{agyColumn?.levels ??"
+      ]
+    },
+    {
+      "file": "apps/server/src/provider/AntigravityProvider.ts",
+      "snippets": [
+        "rawEntries.filter(isStandardAntigravityEntry)",
+        "standardAntigravityCurrentModel(currentValue, entries)",
+        "return withAntigravityOrchestratorModel(",
+        "orchestratorSettings: settings.orchestrator,"
+      ]
+    },
+    {
+      "file": "apps/server/src/provider/ProviderRegistry.ts",
+      "snippets": [
+        "const models = antigravityCatalogModels(",
+        "withAntigravityCatalog(provider, currentSettings)",
+        "classifyCompatibility(provider, initialManifest, initialSettings)",
+        "classifyCompatibility(provider, manifest, currentSettings)"
+      ]
+    },
+    {
+      "file": "apps/server/src/provider/providerStatusCache.ts",
+      "snippets": ["models: antigravityCatalogModels("]
+    },
+    {
+      "file": "apps/mobile/src/lib/modelOptions.ts",
+      "snippets": [
+        "...agyOrchestratorCatalogEntry(provider, model),",
+        "...agyOrchestratorSelectionEntry(existing.providerDriver, fallbackModelSelection, config),"
+      ]
+    },
+    {
+      "file": "knip.jsonc",
+      "snippets": ["\"agy/check-hooks.ts\","]
     }
   ]
 }

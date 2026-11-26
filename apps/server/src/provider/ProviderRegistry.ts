@@ -39,9 +39,9 @@ import { refreshPathFromLoginShell, refreshWindowsPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
-  normalizeAntigravityCatalogModels,
-  readAntigravityOrchestratorSettingsFromConfig,
-} from "./AntigravityProvider.ts";
+  antigravityCatalogModels,
+  withAntigravityCatalog,
+} from "../agy/antigravityOrchestratorModel.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   hydrateCachedProvider,
@@ -386,11 +386,10 @@ export const mergeProviderSnapshot = (
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
-  const rawModels = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
-  const models =
-    nextProvider.driver === ProviderDriverKind.make("antigravity")
-      ? normalizeAntigravityCatalogModels(rawModels)
-      : rawModels;
+  const models = antigravityCatalogModels(
+    nextProvider,
+    mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
+  );
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
   const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
     ? previousProvider.workspaceSnapshots
@@ -574,26 +573,13 @@ export const layer = Layer.effect(
     const classifyCompatibility = (
       provider: ServerProvider,
       manifest: ModelManifest.ModelManifestData,
-      currentSettings: ServerSettingsType | undefined = undefined,
-    ) => {
-      const normalizedProvider =
-        provider.driver === ProviderDriverKind.make("antigravity")
-          ? {
-              ...provider,
-              models: normalizeAntigravityCatalogModels(
-                provider.models,
-                readAntigravityOrchestratorSettingsFromConfig(
-                  currentSettings?.providerInstances[provider.instanceId]?.config,
-                ),
-              ),
-            }
-          : provider;
-      return applyProviderCompatibility(
-        normalizedProvider,
+      currentSettings?: ServerSettingsType,
+    ) =>
+      applyProviderCompatibility(
+        withAntigravityCatalog(provider, currentSettings),
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
-    };
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       bootProviders.map((provider) =>
         classifyCompatibility(provider, initialManifest, initialSettings),

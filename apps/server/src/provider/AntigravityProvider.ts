@@ -1,18 +1,9 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
-  ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_MODELS,
-  ANTIGRAVITY_ORCHESTRATOR_MODEL,
-  ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS,
-  ANTIGRAVITY_ORCHESTRATOR_PLANNER_MODELS,
-  DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS,
-  isAntigravityLegacyOrchestratorModel,
-  normalizeAntigravityThinkingLevel,
   ProviderDriverKind,
-  supportedAntigravityThinkingLevels,
   type AntigravityOrchestratorSettings,
   type AntigravitySettings,
-  type ProviderOptionDescriptor,
   type ProviderSetupError,
   type RuntimeMode,
   type ServerProvider,
@@ -49,6 +40,11 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
+import {
+  isStandardAntigravityEntry,
+  standardAntigravityCurrentModel,
+  withAntigravityOrchestratorModel,
+} from "../agy/antigravityOrchestratorModel.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -100,140 +96,6 @@ function sessionModelSlug(setup: SessionSetupResult): string | undefined {
   return config?.type === "select" ? config.currentValue : setup.models?.currentModelId;
 }
 
-const THINKING_LEVEL_NAMES: Readonly<Record<string, string>> = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra",
-};
-
-function thinkingLevelChoicesForModel(
-  modelSlug: (typeof ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_MODELS)[number],
-  thinkingLevels: AntigravityThinkingLevels,
-): ReadonlyArray<{ readonly id: string; readonly label: string }> {
-  const observed = thinkingLevels.get(modelSlug);
-  const values =
-    observed && selectOptionValues(observed).length > 0
-      ? selectOptionValues(observed)
-      : supportedAntigravityThinkingLevels(modelSlug);
-  return values.map((id) => ({ id, label: THINKING_LEVEL_NAMES[id] ?? id }));
-}
-
-function buildAntigravityOrchestratorModel(
-  standardModels: ReadonlyArray<ServerProviderModel>,
-  thinkingLevels: AntigravityThinkingLevels,
-  settings: AntigravityOrchestratorSettings = DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS,
-): ServerProviderModel | undefined {
-  const bySlug = new Map(standardModels.map((model) => [model.slug, model] as const));
-  const planners = ANTIGRAVITY_ORCHESTRATOR_PLANNER_MODELS.filter((slug) => bySlug.has(slug));
-  const executors = ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_MODELS.filter((slug) => bySlug.has(slug));
-  if (planners.length === 0 || executors.length === 0) return undefined;
-
-  const plannerModel = planners.includes(settings.plannerModel)
-    ? settings.plannerModel
-    : planners[0]!;
-  const executorModel = executors.includes(settings.executorModel)
-    ? settings.executorModel
-    : executors[0]!;
-  const plannerEffort = normalizeAntigravityThinkingLevel(plannerModel, settings.plannerEffort);
-  const executorEffort = normalizeAntigravityThinkingLevel(executorModel, settings.executorEffort);
-
-  const optionDescriptors: ReadonlyArray<ProviderOptionDescriptor> = [
-    {
-      id: ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerModel,
-      type: "select",
-      label: "Orchestrator",
-      options: planners.map((slug) => ({ id: slug, label: bySlug.get(slug)?.name ?? slug })),
-      currentValue: plannerModel,
-    },
-    {
-      id: ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerEffort,
-      type: "select",
-      label: "Orchestrator Thinking",
-      role: "reasoning",
-      options: thinkingLevelChoicesForModel(plannerModel, thinkingLevels),
-      currentValue: plannerEffort,
-    },
-    {
-      id: ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorModel,
-      type: "select",
-      label: "Executor",
-      options: executors.map((slug) => ({ id: slug, label: bySlug.get(slug)?.name ?? slug })),
-      currentValue: executorModel,
-    },
-    {
-      id: ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorEffort,
-      type: "select",
-      label: "Executor Thinking",
-      options: thinkingLevelChoicesForModel(executorModel, thinkingLevels),
-      currentValue: executorEffort,
-    },
-  ];
-
-  return {
-    slug: ANTIGRAVITY_ORCHESTRATOR_MODEL,
-    name: "Orchestrator",
-    isCustom: false,
-    capabilities: createModelCapabilities({ optionDescriptors }),
-  };
-}
-
-export function readAntigravityOrchestratorSettingsFromConfig(
-  config: unknown,
-): AntigravityOrchestratorSettings {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    return DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS;
-  }
-  const raw = (config as Record<string, unknown>).orchestrator;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS;
-  }
-  const record = raw as Record<string, unknown>;
-  const plannerModel =
-    typeof record.plannerModel === "string" &&
-    (ANTIGRAVITY_ORCHESTRATOR_PLANNER_MODELS as ReadonlyArray<string>).includes(record.plannerModel)
-      ? (record.plannerModel as AntigravityOrchestratorSettings["plannerModel"])
-      : DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS.plannerModel;
-  const executorModel =
-    typeof record.executorModel === "string" &&
-    (ANTIGRAVITY_ORCHESTRATOR_EXECUTOR_MODELS as ReadonlyArray<string>).includes(
-      record.executorModel,
-    )
-      ? (record.executorModel as AntigravityOrchestratorSettings["executorModel"])
-      : DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS.executorModel;
-  return {
-    plannerModel,
-    plannerEffort: normalizeAntigravityThinkingLevel(
-      plannerModel,
-      typeof record.plannerEffort === "string" ? record.plannerEffort : undefined,
-      DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS.plannerEffort,
-    ),
-    executorModel,
-    executorEffort: normalizeAntigravityThinkingLevel(
-      executorModel,
-      typeof record.executorEffort === "string" ? record.executorEffort : undefined,
-      DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS.executorEffort,
-    ),
-  };
-}
-
-export function normalizeAntigravityCatalogModels(
-  models: ReadonlyArray<ServerProviderModel>,
-  orchestratorSettings?: AntigravityOrchestratorSettings,
-): ReadonlyArray<ServerProviderModel> {
-  const standardModels = models.filter(
-    (model) =>
-      !isAntigravityLegacyOrchestratorModel(model.slug) &&
-      model.slug !== ANTIGRAVITY_ORCHESTRATOR_MODEL,
-  );
-  const orchestratorModel = buildAntigravityOrchestratorModel(
-    standardModels,
-    new Map(),
-    orchestratorSettings,
-  );
-  return orchestratorModel ? [...standardModels, orchestratorModel] : standardModels;
-}
-
 export function buildAntigravityModelsFromSession(
   setup: SessionSetupResult,
   thinkingLevels: AntigravityThinkingLevels = new Map(),
@@ -257,12 +119,9 @@ export function buildAntigravityModelsFromSession(
             name: model.name,
           })) ?? [])
         : [];
-  const entries = rawEntries.filter((entry) => !isAntigravityLegacyOrchestratorModel(entry.value));
+  const entries = rawEntries.filter(isStandardAntigravityEntry);
   const authoritative = options?.authoritative ?? true;
-  const effectiveCurrent =
-    currentValue && !isAntigravityLegacyOrchestratorModel(currentValue)
-      ? currentValue
-      : entries[0]?.value;
+  const effectiveCurrent = standardAntigravityCurrentModel(currentValue, entries);
   const defaultModel =
     options?.defaultModel !== undefined
       ? entries.some((entry) => entry.value === options.defaultModel)
@@ -298,12 +157,11 @@ export function buildAntigravityModelsFromSession(
       },
     ];
   });
-  const orchestratorModel = buildAntigravityOrchestratorModel(
+  return withAntigravityOrchestratorModel(
     standardModels,
     thinkingLevels,
     options?.orchestratorSettings,
   );
-  return orchestratorModel ? [...standardModels, orchestratorModel] : standardModels;
 }
 
 function nativeCommands(

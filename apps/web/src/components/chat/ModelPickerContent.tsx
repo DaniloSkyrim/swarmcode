@@ -2,9 +2,6 @@ import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
-  ANTIGRAVITY_ORCHESTRATOR_MODEL,
-  isAntigravityOrchestratorModel,
-  type AntigravityOrchestratorSettings,
   type ProviderInstanceId,
   type ProviderOptionSelection,
   type EnvironmentId,
@@ -12,12 +9,6 @@ import {
   type ResolvedKeybindingsConfig,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
-import {
-  buildAntigravityOrchestratorSelection,
-  formatAntigravityOrchestratorShortPair,
-  readAntigravityOrchestratorDefaultsFromModels,
-  resolveAntigravityOrchestratorPair,
-} from "@t3tools/client-runtime/antigravity-orchestrator";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -37,11 +28,10 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
-import { AntigravityOrchestratorPickerFlow } from "./AntigravityOrchestratorPickerFlow";
+import { ChevronRightIcon } from "lucide-react";
+import { useAgyOrchestratorPicker } from "~/agy/useAgyOrchestratorPicker";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
-import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
@@ -402,8 +392,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onOpenProviderSetup,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
-  const [orchestratorFlowInstanceId, setOrchestratorFlowInstanceId] =
-    useState<ProviderInstanceId | null>(null);
+  const agyOrchestrator = useAgyOrchestratorPicker(onInstanceModelChange, searchInputRef);
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this picker's mount to global keydown handlers
@@ -515,7 +504,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
-    setOrchestratorFlowInstanceId(null);
+    agyOrchestrator.close();
     setSelectedInstanceId(instanceId);
     // Focusing the search on touch raises the on-screen keyboard on every provider tap.
     if (window.matchMedia("(pointer: coarse)").matches) return;
@@ -544,15 +533,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   };
 
-  const applyAntigravityOrchestratorPair = (
-    instanceId: ProviderInstanceId,
-    pair: AntigravityOrchestratorSettings,
-  ) => {
-    setOrchestratorFlowInstanceId(null);
-    const selection = buildAntigravityOrchestratorSelection(instanceId, pair);
-    onInstanceModelChange(instanceId, ANTIGRAVITY_ORCHESTRATOR_MODEL, selection.options);
-  };
-
   const handleModelSelect = (
     modelSlug: string,
     instanceId: ProviderInstanceId,
@@ -573,11 +553,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (!resolvedModel) return null;
     if (additive && onToggleModel) {
       onToggleModel(instanceId, resolvedModel);
-    } else if (
-      entry.driverKind === "antigravity" &&
-      isAntigravityOrchestratorModel(resolvedModel)
-    ) {
-      setOrchestratorFlowInstanceId(instanceId);
+    } else if (agyOrchestrator.interceptSelect(entry.driverKind, instanceId, resolvedModel)) {
       return null;
     } else {
       onInstanceModelChange(instanceId, resolvedModel);
@@ -823,95 +799,39 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     subProviderSections?.sections.map((section) => [section.key, section] as const),
   );
 
+  const agyView = agyOrchestrator.view({
+    entryByInstanceId,
+    selectedEntry:
+      selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId),
+    isSearching,
+    filteredModels,
+    activeInstanceId: props.activeInstanceId,
+    activeModelSlug,
+    activeModelOptions: props.activeModelOptions,
+    docked: props.docked,
+    showSidebar,
+    getModelDisabledReason,
+  });
+  const visibleModels = (() => {
+    if (subProviderSections) {
+      return [
+        ...subProviderSections.ungrouped,
+        ...subProviderSections.sections.flatMap((section) =>
+          section.isExpanded ? section.models : [],
+        ),
+      ];
+    }
+    if (!legacySection) {
+      return filteredModels;
+    }
+    return [
+      ...legacySection.currentModels,
+      ...(legacySection.isExpanded ? legacySection.legacyModels : []),
+    ];
+  })();
+
   const selectedEntry =
     selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
-
-  const pinnedAntigravityOrchestrator = (() => {
-    if (isSearching || selectedInstanceId === "favorites") return null;
-    if (selectedEntry?.driverKind !== "antigravity") return null;
-    const item = filteredModels.find(
-      (model) =>
-        model.instanceId === selectedEntry.instanceId && isAntigravityOrchestratorModel(model.slug),
-    );
-    if (!item) return null;
-    const defaults = readAntigravityOrchestratorDefaultsFromModels(selectedEntry.models);
-    const isActive =
-      props.activeInstanceId === selectedEntry.instanceId &&
-      isAntigravityOrchestratorModel(activeModelSlug);
-    const activePair = isActive
-      ? resolveAntigravityOrchestratorPair(
-          {
-            instanceId: selectedEntry.instanceId,
-            model: ANTIGRAVITY_ORCHESTRATOR_MODEL,
-            ...(props.activeModelOptions ? { options: props.activeModelOptions } : {}),
-          },
-          defaults,
-          selectedEntry.models,
-        )
-      : defaults;
-    return {
-      item,
-      entry: selectedEntry,
-      defaults,
-      activePair,
-      isActive,
-      disabledReason: getModelDisabledReason?.(selectedEntry.instanceId, item.slug) ?? null,
-    };
-  })();
-
-  const visibleModels = (() => {
-    const base = (() => {
-      if (subProviderSections) {
-        return [
-          ...subProviderSections.ungrouped,
-          ...subProviderSections.sections.flatMap((section) =>
-            section.isExpanded ? section.models : [],
-          ),
-        ];
-      }
-      if (!legacySection) {
-        return filteredModels;
-      }
-      return [
-        ...legacySection.currentModels,
-        ...(legacySection.isExpanded ? legacySection.legacyModels : []),
-      ];
-    })();
-    if (!pinnedAntigravityOrchestrator) return base;
-    return base.filter(
-      (model) =>
-        !(
-          model.instanceId === pinnedAntigravityOrchestrator.item.instanceId &&
-          isAntigravityOrchestratorModel(model.slug)
-        ),
-    );
-  })();
-
-  const orchestratorFlowEntry =
-    orchestratorFlowInstanceId !== null
-      ? (entryByInstanceId.get(orchestratorFlowInstanceId) ?? null)
-      : null;
-  const orchestratorFlowDefaults = orchestratorFlowEntry
-    ? readAntigravityOrchestratorDefaultsFromModels(orchestratorFlowEntry.models)
-    : null;
-  const orchestratorFlowIsActive =
-    orchestratorFlowEntry !== null &&
-    props.activeInstanceId === orchestratorFlowEntry.instanceId &&
-    isAntigravityOrchestratorModel(activeModelSlug);
-  const orchestratorFlowCurrentPair =
-    orchestratorFlowEntry && orchestratorFlowDefaults
-      ? orchestratorFlowIsActive
-        ? resolveAntigravityOrchestratorPair(
-            {
-              instanceId: orchestratorFlowEntry.instanceId,
-              model: ANTIGRAVITY_ORCHESTRATOR_MODEL,
-              ...(props.activeModelOptions ? { options: props.activeModelOptions } : {}),
-            },
-            orchestratorFlowDefaults,
-            orchestratorFlowEntry.models,
-          )
-        : orchestratorFlowDefaults
-      : null;
   const providerSetupEntries =
     !isSearching && canOpenProviderSetup
       ? instanceEntries.filter(
@@ -945,7 +865,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       : [];
   });
 
-  const modelJumpModelKeys = visibleModels
+  const modelJumpModelKeys = agyView
+    .withoutPinned(visibleModels)
     .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
     .slice(0, MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.length)
     .map((model) => modelPickerModelKey(model.instanceId, model.slug));
@@ -973,7 +894,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ]),
       ];
     }
-    const modelKeys = visibleModels.map(keyOf);
+    const modelKeys = agyView.withoutPinned(visibleModels).map(keyOf);
     // The toggle trails the list, so expanding it reveals older models above it.
     return legacySection ? [...modelKeys, legacySection.key] : modelKeys;
   })();
@@ -1065,11 +986,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ref={pickerContentRef}
         className={cn(
           "relative flex w-screen flex-row overflow-hidden",
-          orchestratorFlowEntry && orchestratorFlowCurrentPair
-            ? props.docked
-              ? "max-w-138"
-              : "max-w-104"
-            : "max-w-90",
+          agyView.contentWidthClass,
           props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
@@ -1105,364 +1022,268 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           />
         )}
 
-        {orchestratorFlowEntry && orchestratorFlowCurrentPair ? (
+        {agyView.flowPane}
+        <Combobox<string, boolean>
+          inline
+          items={allItemKeys}
+          filteredItems={filteredItemKeys}
+          filter={null}
+          autoHighlight
+          open
+          virtualized
+          multiple={onToggleModel !== undefined}
+          value={onToggleModel ? [...selectedModelKeySet] : activeModelKey}
+          onItemHighlighted={(modelKey, eventDetails) => {
+            highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
+            if (eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
+              void modelListRef.current?.scrollIndexIntoView?.({
+                index: eventDetails.index,
+                animated: false,
+              });
+            }
+          }}
+          onValueChange={(value, details) => {
+            const modelKey = Array.isArray(value)
+              ? (value.find((key) => !selectedModelKeySet.has(key)) ??
+                [...selectedModelKeySet].find((key) => !value.includes(key)))
+              : value;
+            if (typeof modelKey !== "string") {
+              return;
+            }
+            const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
+            if (legacyInstanceId) {
+              toggleLegacySection(legacyInstanceId);
+              return;
+            }
+            if (subProviderSectionByKey.has(modelKey)) {
+              toggleSubProviderSection(modelKey);
+              return;
+            }
+            const model = parseModelPickerModelKey(modelKey);
+            if (model) {
+              handleModelSelect(
+                model.slug,
+                model.instanceId,
+                "shiftKey" in details.event && details.event.shiftKey === true,
+              );
+            }
+          }}
+        >
           <div
+            hidden={agyView.flowPane !== null}
             className={cn(
-              "flex min-h-0 flex-1 flex-col overflow-hidden",
+              "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
               showSidebar && "border-l border-border/70",
             )}
           >
-            <AntigravityOrchestratorPickerFlow
-              liveModels={orchestratorFlowEntry.models}
-              currentPair={orchestratorFlowCurrentPair}
-              isActiveOrchestrator={orchestratorFlowIsActive}
-              onBack={() => {
-                setOrchestratorFlowInstanceId(null);
-                window.requestAnimationFrame(() => focusSearchInput());
+            <ComboboxSearchInput
+              ref={searchInputRef}
+              placeholder={gt("Search models...")}
+              value={searchQuery}
+              onChange={(e) => {
+                if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
+                setSearchQuery(e.target.value);
               }}
-              onComplete={(pair) =>
-                applyAntigravityOrchestratorPair(orchestratorFlowEntry.instanceId, pair)
-              }
-            />
-          </div>
-        ) : (
-          <Combobox<string, boolean>
-            inline
-            items={allItemKeys}
-            filteredItems={filteredItemKeys}
-            filter={null}
-            autoHighlight
-            open
-            virtualized
-            multiple={onToggleModel !== undefined}
-            value={onToggleModel ? [...selectedModelKeySet] : activeModelKey}
-            onItemHighlighted={(modelKey, eventDetails) => {
-              highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
-              if (eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
-                void modelListRef.current?.scrollIndexIntoView?.({
-                  index: eventDetails.index,
-                  animated: false,
-                });
-              }
-            }}
-            onValueChange={(value, details) => {
-              const modelKey = Array.isArray(value)
-                ? (value.find((key) => !selectedModelKeySet.has(key)) ??
-                  [...selectedModelKeySet].find((key) => !value.includes(key)))
-                : value;
-              if (typeof modelKey !== "string") {
-                return;
-              }
-              const legacyInstanceId = parseModelPickerLegacySectionKey(modelKey);
-              if (legacyInstanceId) {
-                toggleLegacySection(legacyInstanceId);
-                return;
-              }
-              if (subProviderSectionByKey.has(modelKey)) {
-                toggleSubProviderSection(modelKey);
-                return;
-              }
-              const model = parseModelPickerModelKey(modelKey);
-              if (model) {
-                handleModelSelect(
-                  model.slug,
-                  model.instanceId,
-                  "shiftKey" in details.event && details.event.shiftKey === true,
-                );
-              }
-            }}
-          >
-            <div
-              className={cn(
-                "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
-                showSidebar && "border-l border-border/70",
-              )}
-            >
-              <ComboboxSearchInput
-                ref={searchInputRef}
-                placeholder={gt("Search models...")}
-                value={searchQuery}
-                onChange={(e) => {
-                  if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
-                  setSearchQuery(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  if (e.nativeEvent.isComposing || e.keyCode === 229) {
-                    (
-                      e as typeof e & { preventBaseUIHandler?: () => void }
-                    ).preventBaseUIHandler?.();
-                    e.stopPropagation();
-                    return;
-                  }
-                  if (
-                    showSidebar &&
-                    !e.altKey &&
-                    !e.ctrlKey &&
-                    !e.metaKey &&
-                    ((e.key === "ArrowLeft" && !e.shiftKey && searchQuery.length === 0) ||
-                      (e.key === "Tab" && e.shiftKey))
-                  ) {
-                    const sidebar = e.currentTarget
-                      .closest("[data-model-picker-content]")
-                      ?.querySelector("[data-model-picker-sidebar]");
-                    const button =
-                      sidebar?.querySelector<HTMLButtonElement>(
-                        'button[aria-pressed="true"]:not(:disabled)',
-                      ) ?? sidebar?.querySelector<HTMLButtonElement>("button:not(:disabled)");
-                    if (button) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      button.focus();
-                      return;
-                    }
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onRequestClose?.();
-                    return;
-                  }
-                  if (
-                    props.onFocusEffort &&
-                    e.key === "ArrowRight" &&
-                    !e.altKey &&
-                    !e.ctrlKey &&
-                    !e.metaKey &&
-                    !e.shiftKey &&
-                    e.currentTarget.selectionStart === searchQuery.length
-                  ) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    // The column shows the selected model's effort, so a highlighted model is picked
-                    // first; the owning popup then moves focus to that model's levels.
-                    const highlighted = highlightedModelKeyRef.current
-                      ? parseModelPickerModelKey(highlightedModelKeyRef.current)
-                      : null;
-                    const pickedNew =
-                      highlighted !== null &&
-                      highlightedModelKeyRef.current !== activeModelKey &&
-                      handleModelSelect(highlighted.slug, highlighted.instanceId) !== null;
-                    if (!pickedNew) props.onFocusEffort();
-                    return;
-                  }
-                  if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                    (
-                      e as typeof e & { preventBaseUIHandler?: () => void }
-                    ).preventBaseUIHandler?.();
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const legacyInstanceId = parseModelPickerLegacySectionKey(
-                      highlightedModelKeyRef.current,
-                    );
-                    if (legacyInstanceId) {
-                      toggleLegacySection(legacyInstanceId);
-                      return;
-                    }
-                    if (subProviderSectionByKey.has(highlightedModelKeyRef.current)) {
-                      toggleSubProviderSection(highlightedModelKeyRef.current);
-                      return;
-                    }
-                    const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
-                    if (model) {
-                      handleModelSelect(model.slug, model.instanceId, e.shiftKey);
-                    }
-                    return;
-                  }
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) {
+                  (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
                   e.stopPropagation();
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                onTouchStart={(e) => e.stopPropagation()}
-              />
-
-              <ModelPickerList
-                listRef={modelListRef}
-                itemKeys={filteredItemKeys}
-                extraData={modelListExtraData}
-                renderItem={({ item: modelKey, index }) => {
-                  if (legacySection?.key === modelKey) {
-                    return (
-                      <ComboboxItem
-                        hideIndicator
-                        index={index}
-                        value={modelKey}
-                        aria-expanded={legacySection.isExpanded}
-                        className="group w-full cursor-pointer"
-                      >
-                        <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
-                          {legacySection.isExpanded
-                            ? gt("Show less", { $context: "collapses the list of older models" })
-                            : gt("Show more", { $context: "expands the list of older models" })}
-                        </span>
-                      </ComboboxItem>
-                    );
-                  }
-                  const subProviderSection = subProviderSectionByKey.get(modelKey);
-                  if (subProviderSection) {
-                    const unavailable = subProviderSection.unavailableReason !== undefined;
-                    return (
-                      <ComboboxItem
-                        hideIndicator
-                        index={index}
-                        value={modelKey}
-                        disabled={unavailable}
-                        aria-expanded={unavailable ? undefined : subProviderSection.isExpanded}
-                        className="group w-full cursor-pointer"
-                      >
-                        <div className="min-w-0 flex-1 text-left">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <div className="min-w-0 truncate text-sm font-normal leading-snug">
-                              {subProviderSection.name}
-                            </div>
-                            {unavailable ? (
-                              <Badge variant="outline" size="sm">
-                                {gt("Unavailable", {
-                                  $context: "backend cannot be used right now",
-                                })}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
-                            {subProviderSection.unavailableReason ??
-                              gt("{count, plural, one {{count} model} other {{count} models}}", {
-                                count: subProviderSection.models.length,
-                              })}
-                          </div>
-                        </div>
-                        {unavailable ? null : (
-                          <ChevronRightIcon
-                            className={cn(
-                              "size-4 shrink-0 transition-transform",
-                              subProviderSection.isExpanded && "rotate-90",
-                            )}
-                          />
-                        )}
-                      </ComboboxItem>
-                    );
-                  }
-                  const model = filteredModelByKey.get(modelKey);
-                  if (!model) {
-                    return null;
-                  }
-                  const disabledReason =
-                    getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
-                  return (
-                    <ModelListRow
-                      key={modelKey}
-                      index={index}
-                      slug={model.slug}
-                      name={model.name}
-                      subProvider={model.subProvider}
-                      instanceId={model.instanceId}
-                      driverKind={model.driverKind}
-                      providerDisplayName={model.instanceDisplayName}
-                      providerAccentColor={model.instanceAccentColor}
-                      acpRegistryAgentId={model.acpRegistryAgentId}
-                      acpRegistryIconUrl={model.acpRegistryIconUrl}
-                      isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
-                      isSelected={
-                        selectedModelKeys !== undefined
-                          ? selectedModelKeySet.has(modelKey)
-                          : modelKey === activeModelKey
-                      }
-                      favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
-                      showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
-                      showNewBadge={model.badge === "new"}
-                      unavailable={model.isUnavailable === true}
-                      jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                      disabledReason={disabledReason}
-                      onToggleFavorite={toggleFavorite}
-                    />
-                  );
-                }}
-              />
-              <ModelPickerProviderNotices
-                setupEntries={providerSetupEntries}
-                updateRequiredNotices={updateRequiredNotices}
-                emptyLabel={
-                  selectedInstanceId === "favorites" && !isSearching
-                    ? gt("No favorites yet")
-                    : workspaceModelsScanning
-                      ? gt("Searching project models...")
-                      : gt("No models found")
+                  return;
                 }
-                onRequestClose={onRequestClose}
-                onOpenProviderSetup={onOpenProviderSetup}
-              />
-              {pinnedAntigravityOrchestrator ? (
-                <div className="shrink-0 border-t border-border/70 px-2 py-1.5">
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      data-antigravity-orchestrator-trigger="true"
-                      disabled={pinnedAntigravityOrchestrator.disabledReason !== null}
-                      onClick={() =>
-                        setOrchestratorFlowInstanceId(
-                          pinnedAntigravityOrchestrator.entry.instanceId,
-                        )
-                      }
-                      className={cn(
-                        "group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none hover:bg-foreground/[0.09] focus-visible:bg-foreground/[0.09] disabled:cursor-not-allowed disabled:opacity-60",
-                        pinnedAntigravityOrchestrator.isActive && "bg-foreground/[0.06]",
-                      )}
+                if (
+                  showSidebar &&
+                  !e.altKey &&
+                  !e.ctrlKey &&
+                  !e.metaKey &&
+                  ((e.key === "ArrowLeft" && !e.shiftKey && searchQuery.length === 0) ||
+                    (e.key === "Tab" && e.shiftKey))
+                ) {
+                  const sidebar = e.currentTarget
+                    .closest("[data-model-picker-content]")
+                    ?.querySelector("[data-model-picker-sidebar]");
+                  const button =
+                    sidebar?.querySelector<HTMLButtonElement>(
+                      'button[aria-pressed="true"]:not(:disabled)',
+                    ) ?? sidebar?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+                  if (button) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    button.focus();
+                    return;
+                  }
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onRequestClose?.();
+                  return;
+                }
+                if (
+                  props.onFocusEffort &&
+                  e.key === "ArrowRight" &&
+                  !e.altKey &&
+                  !e.ctrlKey &&
+                  !e.metaKey &&
+                  !e.shiftKey &&
+                  e.currentTarget.selectionStart === searchQuery.length
+                ) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // The column shows the selected model's effort, so a highlighted model is picked
+                  // first; the owning popup then moves focus to that model's levels.
+                  const highlighted = highlightedModelKeyRef.current
+                    ? parseModelPickerModelKey(highlightedModelKeyRef.current)
+                    : null;
+                  const pickedNew =
+                    highlighted !== null &&
+                    highlightedModelKeyRef.current !== activeModelKey &&
+                    handleModelSelect(highlighted.slug, highlighted.instanceId) !== null;
+                  if (!pickedNew) props.onFocusEffort();
+                  return;
+                }
+                if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                  (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const legacyInstanceId = parseModelPickerLegacySectionKey(
+                    highlightedModelKeyRef.current,
+                  );
+                  if (legacyInstanceId) {
+                    toggleLegacySection(legacyInstanceId);
+                    return;
+                  }
+                  if (subProviderSectionByKey.has(highlightedModelKeyRef.current)) {
+                    toggleSubProviderSection(highlightedModelKeyRef.current);
+                    return;
+                  }
+                  const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
+                  if (model) {
+                    handleModelSelect(model.slug, model.instanceId, e.shiftKey);
+                  }
+                  return;
+                }
+                e.stopPropagation();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+            />
+
+            <ModelPickerList
+              listRef={modelListRef}
+              itemKeys={filteredItemKeys}
+              extraData={modelListExtraData}
+              renderItem={({ item: modelKey, index }) => {
+                if (legacySection?.key === modelKey) {
+                  return (
+                    <ComboboxItem
+                      hideIndicator
+                      index={index}
+                      value={modelKey}
+                      aria-expanded={legacySection.isExpanded}
+                      className="group w-full cursor-pointer"
                     >
-                      <ProviderInstanceIcon
-                        driverKind={pinnedAntigravityOrchestrator.entry.driverKind}
-                        displayName={pinnedAntigravityOrchestrator.entry.displayName}
-                        accentColor={pinnedAntigravityOrchestrator.entry.accentColor}
-                        className="size-4 shrink-0"
-                        iconClassName="size-4"
-                      />
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="flex items-center gap-1.5">
-                          <span className="truncate font-medium text-foreground text-sm leading-tight">
-                            {gt("Orchestrator")}
-                          </span>
-                          {pinnedAntigravityOrchestrator.isActive ? (
-                            <CheckIcon
-                              aria-hidden="true"
-                              className="size-3.5 shrink-0 text-foreground"
-                            />
-                          ) : null}
-                        </span>
-                        <span className="truncate text-muted-foreground text-xs leading-tight">
-                          {formatAntigravityOrchestratorShortPair(
-                            pinnedAntigravityOrchestrator.activePair,
-                          )}
-                        </span>
+                      <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
+                        {legacySection.isExpanded
+                          ? gt("Show less", { $context: "collapses the list of older models" })
+                          : gt("Show more", { $context: "expands the list of older models" })}
                       </span>
-                      <ChevronRightIcon
-                        aria-hidden="true"
-                        className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      data-antigravity-orchestrator-use-default="true"
-                      disabled={pinnedAntigravityOrchestrator.disabledReason !== null}
-                      onClick={() =>
-                        applyAntigravityOrchestratorPair(
-                          pinnedAntigravityOrchestrator.entry.instanceId,
-                          pinnedAntigravityOrchestrator.defaults,
-                        )
-                      }
-                      aria-label={gt("Use default ({pair})", {
-                        pair: formatAntigravityOrchestratorShortPair(
-                          pinnedAntigravityOrchestrator.defaults,
-                        ),
-                      })}
-                      className="shrink-0 cursor-pointer rounded-sm border border-border/70 bg-background/60 px-2 py-1 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-60"
+                    </ComboboxItem>
+                  );
+                }
+                const subProviderSection = subProviderSectionByKey.get(modelKey);
+                if (subProviderSection) {
+                  const unavailable = subProviderSection.unavailableReason !== undefined;
+                  return (
+                    <ComboboxItem
+                      hideIndicator
+                      index={index}
+                      value={modelKey}
+                      disabled={unavailable}
+                      aria-expanded={unavailable ? undefined : subProviderSection.isExpanded}
+                      className="group w-full cursor-pointer"
                     >
-                      {gt("Default", {
-                        $context: "quick action to use default orchestrator models",
-                      })}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              {props.listFooter}
-            </div>
-          </Combobox>
-        )}
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="min-w-0 truncate text-sm font-normal leading-snug">
+                            {subProviderSection.name}
+                          </div>
+                          {unavailable ? (
+                            <Badge variant="outline" size="sm">
+                              {gt("Unavailable", { $context: "backend cannot be used right now" })}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
+                          {subProviderSection.unavailableReason ??
+                            gt("{count, plural, one {{count} model} other {{count} models}}", {
+                              count: subProviderSection.models.length,
+                            })}
+                        </div>
+                      </div>
+                      {unavailable ? null : (
+                        <ChevronRightIcon
+                          className={cn(
+                            "size-4 shrink-0 transition-transform",
+                            subProviderSection.isExpanded && "rotate-90",
+                          )}
+                        />
+                      )}
+                    </ComboboxItem>
+                  );
+                }
+                const model = filteredModelByKey.get(modelKey);
+                if (!model) {
+                  return null;
+                }
+                const disabledReason =
+                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                return (
+                  <ModelListRow
+                    key={modelKey}
+                    index={index}
+                    slug={model.slug}
+                    name={model.name}
+                    subProvider={model.subProvider}
+                    instanceId={model.instanceId}
+                    driverKind={model.driverKind}
+                    providerDisplayName={model.instanceDisplayName}
+                    providerAccentColor={model.instanceAccentColor}
+                    acpRegistryAgentId={model.acpRegistryAgentId}
+                    acpRegistryIconUrl={model.acpRegistryIconUrl}
+                    isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
+                    isSelected={
+                      selectedModelKeys !== undefined
+                        ? selectedModelKeySet.has(modelKey)
+                        : modelKey === activeModelKey
+                    }
+                    favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
+                    showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
+                    showNewBadge={model.badge === "new"}
+                    unavailable={model.isUnavailable === true}
+                    jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                    disabledReason={disabledReason}
+                    onToggleFavorite={toggleFavorite}
+                  />
+                );
+              }}
+            />
+            <ModelPickerProviderNotices
+              setupEntries={providerSetupEntries}
+              updateRequiredNotices={updateRequiredNotices}
+              emptyLabel={
+                selectedInstanceId === "favorites" && !isSearching
+                  ? gt("No favorites yet")
+                  : workspaceModelsScanning
+                    ? gt("Searching project models...")
+                    : gt("No models found")
+              }
+              onRequestClose={onRequestClose}
+              onOpenProviderSetup={onOpenProviderSetup}
+            />
+            {agyView.pinnedFooter}
+            {props.listFooter}
+          </div>
+        </Combobox>
       </div>
     </>
   );

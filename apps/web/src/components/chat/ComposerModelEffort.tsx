@@ -1,24 +1,10 @@
 import {
-  antigravityOrchestratorShortName,
-  antigravityThinkingLevelLabel,
-  formatAntigravityOrchestratorEffortSummary,
-  readAntigravityOrchestratorDefaultsFromModels,
-  resolveAntigravityOrchestratorPair,
-  thinkingLevelsForAntigravityModel,
-  updateAntigravityOrchestratorSelection,
-} from "@t3tools/client-runtime/antigravity-orchestrator";
-import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
   isReasoningControl,
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
-import {
-  isAntigravityOrchestratorModel,
-  type AntigravityThinkingLevel,
-  type ProviderOptionDescriptor,
-  type RuntimeMode,
-} from "@t3tools/contracts";
+import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -48,6 +34,10 @@ import {
   useTraitsSelection,
 } from "./TraitsPicker";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import {
+  describeAgyOrchestratorEffort,
+  useAgyOrchestratorEffortColumn,
+} from "~/agy/agyOrchestratorEffort";
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
@@ -104,39 +94,8 @@ export function describeComposerEffort(
   resolve: MessageResolver = m,
 ): { suffix: ReactNode; detail: string | null } {
   if (!traits) return { suffix: null, detail: null };
-  if (traits.provider === "antigravity" && isAntigravityOrchestratorModel(traits.model ?? "")) {
-    const defaults = readAntigravityOrchestratorDefaultsFromModels(traits.models);
-    const modelSelection =
-      traits.instanceId && traits.model
-        ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
-        : null;
-    const pair = resolveAntigravityOrchestratorPair(modelSelection, defaults, traits.models);
-    const summary = formatAntigravityOrchestratorEffortSummary(pair, resolve);
-    const detail = resolve(
-      msg("Orchestrator {plannerEffort} · Executor {executorEffort}", {
-        plannerEffort: antigravityThinkingLevelLabel(pair.plannerEffort, resolve),
-        executorEffort: antigravityThinkingLevelLabel(pair.executorEffort, resolve),
-      }),
-    );
-    return {
-      detail,
-      suffix: (
-        <span
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
-            size === "sm" && "-ms-0.5",
-          )}
-        >
-          <span aria-hidden="true" className="text-muted-foreground/50">
-            ·
-          </span>
-          <span data-composer-control-label className="max-w-28 truncate">
-            {summary}
-          </span>
-        </span>
-      ),
-    };
-  }
+  const agyEffort = describeAgyOrchestratorEffort(traits, size, resolve);
+  if (agyEffort) return agyEffort;
   const visibility = getTraitsSectionVisibility({ ...traits, resolve });
   if (!visibility.hasAnyControls) return { suffix: null, detail: null };
   const modelSelection =
@@ -583,127 +542,15 @@ function NoEffortRow() {
   );
 }
 
-function AntigravityOrchestratorEffortLevels(props: { traits: TraitsSelectionInput }) {
-  const gt = useGT();
-  const messages = useMessages();
-  const traits = useTraitsSelection(props.traits);
-  const { instanceId, model, models, modelOptions } = props.traits;
-  const defaults = readAntigravityOrchestratorDefaultsFromModels(models);
-  const currentSelection =
-    instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null;
-  const pair = resolveAntigravityOrchestratorPair(currentSelection, defaults, models);
-  const plannerLevels = thinkingLevelsForAntigravityModel(pair.plannerModel, models);
-  const executorLevels = thinkingLevelsForAntigravityModel(pair.executorModel, models);
-
-  const updateEffort = (
-    role: "plannerEffort" | "executorEffort",
-    level: AntigravityThinkingLevel,
-  ) => {
-    if (!currentSelection) return;
-    const next = updateAntigravityOrchestratorSelection(
-      currentSelection,
-      { [role]: level },
-      defaults,
-      models,
-    );
-    traits.replaceOptions(next.options);
-  };
-
-  return (
-    <div className="flex flex-col gap-1" data-antigravity-orchestrator-effort>
-      <div role="radiogroup" aria-label={gt("Orchestrator thinking level")}>
-        <div className="flex items-center justify-between gap-1 px-2 pt-0.5 pb-1 text-muted-foreground text-xs">
-          <span className="font-medium">{gt("Orchestrator")}</span>
-          <span className="truncate opacity-80">
-            {antigravityOrchestratorShortName(pair.plannerModel)}
-          </span>
-        </div>
-        {plannerLevels.map((level) => {
-          const selected = pair.plannerEffort === level;
-          return (
-            <button
-              key={`planner-${level}`}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              data-effort-level
-              data-effort-row
-              tabIndex={selected ? 0 : -1}
-              onClick={() => updateEffort("plannerEffort", level)}
-              className={cn(
-                COLUMN_ROW,
-                "h-7 text-xs",
-                selected
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">
-                {antigravityThinkingLevelLabel(level, messages)}
-              </span>
-              {selected ? (
-                <CheckIcon aria-hidden="true" className="ms-auto size-3.5 shrink-0" />
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="my-0.5 border-t border-border/60" />
-
-      <div role="radiogroup" aria-label={gt("Executor thinking level")}>
-        <div className="flex items-center justify-between gap-1 px-2 pt-0.5 pb-1 text-muted-foreground text-xs">
-          <span className="font-medium">{gt("Executor")}</span>
-          <span className="truncate opacity-80">
-            {antigravityOrchestratorShortName(pair.executorModel)}
-          </span>
-        </div>
-        {executorLevels.map((level) => {
-          const selected = pair.executorEffort === level;
-          return (
-            <button
-              key={`executor-${level}`}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              data-effort-level
-              data-effort-row
-              tabIndex={-1}
-              onClick={() => updateEffort("executorEffort", level)}
-              className={cn(
-                COLUMN_ROW,
-                "h-7 text-xs",
-                selected
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">
-                {antigravityThinkingLevelLabel(level, messages)}
-              </span>
-              {selected ? (
-                <CheckIcon aria-hidden="true" className="ms-auto size-3.5 shrink-0" />
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 /** The model picker's effort column: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
   const gt = useGT();
   const messages = useMessages();
   const picker = use(DockedPickerContext);
-  const isAntigravityOrchestrator =
-    props.traits?.provider === "antigravity" &&
-    isAntigravityOrchestratorModel(props.traits.model ?? "");
-  const visibility =
-    props.traits && !isAntigravityOrchestrator
-      ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
-      : null;
+  const agyColumn = useAgyOrchestratorEffortColumn(props.traits, COLUMN_ROW);
+  const visibility = props.traits
+    ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
+    : null;
   const controls =
     props.traits && visibility
       ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
@@ -713,19 +560,16 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
       {/* Matches the search row's box, so one rule runs across the top of the popup. */}
       <div className="shrink-0 px-3 pt-2.5">
         <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
-          <span className="whitespace-nowrap text-muted-foreground">
-            {isAntigravityOrchestrator
-              ? gt("Thinking Level")
-              : (controls?.effort?.descriptor.label ??
-                (controls?.others.length
-                  ? gt("Options", { $context: "heading for model options" })
-                  : gt("Effort", { $context: "heading for reasoning effort levels" })))}
+          <span className="text-muted-foreground">
+            {agyColumn?.heading ??
+              controls?.effort?.descriptor.label ??
+              (controls?.others.length
+                ? gt("Options", { $context: "heading for model options" })
+                : gt("Effort", { $context: "heading for reasoning effort levels" }))}
           </span>
-          {!isAntigravityOrchestrator ? (
-            <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
-              {picker.modelLabel}
-            </span>
-          ) : null}
+          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
+            {agyColumn ? null : picker.modelLabel}
+          </span>
         </div>
       </div>
       {/* pt-2.5 puts the first level on the same line as the first model. */}
@@ -734,15 +578,8 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
       >
-        {props.traits ? (
-          isAntigravityOrchestrator ? (
-            <AntigravityOrchestratorEffortLevels traits={props.traits} />
-          ) : (
-            <EffortLevels traits={props.traits} />
-          )
-        ) : (
-          <NoEffortRow />
-        )}
+        {agyColumn?.levels ??
+          (props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />)}
       </div>
     </>
   );

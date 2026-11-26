@@ -45,6 +45,8 @@
         "prepare-server-compile-cache.cjs",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
+        // Fork: agy/sync.sh runs it, and knip does not trace shell scripts.
+        "agy/check-hooks.ts",
       ],
       "ignoreDependencies": ["esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.

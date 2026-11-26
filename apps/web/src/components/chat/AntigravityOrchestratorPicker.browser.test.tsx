@@ -273,6 +273,15 @@ describe("Antigravity Orchestrator model picker UX", () => {
     expect(document.querySelector('[data-orchestrator-option="gemini-4-carbon"]')).not.toBeNull();
     expect(document.querySelector('[data-orchestrator-option="gemini-4-hydrogen"]')).toBeNull();
 
+    // Back from step 1 shows the model list again, then the row reopens the flow.
+    await userEvent.click(page.getByRole("button", { name: "Back" }));
+    await expect.element(page.getByRole("option", { name: /Gemini 4 Neon/ })).toBeVisible();
+    await expect.element(page.getByPlaceholder("Search models...")).toBeVisible();
+    await userEvent.click(
+      document.querySelector<HTMLButtonElement>("[data-antigravity-orchestrator-trigger]")!,
+    );
+    await expect.element(page.getByText("1/2")).toBeVisible();
+
     // Step 1 -> pick Carbon -> advances to Step 2/2: Choose Executor
     await userEvent.click(
       document.querySelector<HTMLButtonElement>('[data-orchestrator-option="gemini-4-carbon"]')!,

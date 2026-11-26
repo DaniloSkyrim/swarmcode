@@ -2272,35 +2272,17 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
       ]);
-      const tool = <const Name extends string>(name: Name, description: string) =>
+      const tool = (name: string, description: string) =>
         Tool.make(name, {
           description,
           success: Schema.Struct({}),
           failure: OrchestratorMcpFailure,
           failureMode: "return",
         });
-      const typedTool = Tool.make("open_url", {
-        description: "Opens a URL.",
-        parameters: Schema.Struct({ url: Schema.String }),
-        success: Schema.Struct({ opened: Schema.String }),
-        failure: OrchestratorMcpFailure,
-        failureMode: "return",
-        dependencies: [McpInvocationContext.McpInvocationContext],
-      }).annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
-      const linkedOnlyTool = tool("linked_only", "Requires linked environments.").annotate(
-        McpSchema.EnabledWhen,
-        McpInvocationContext.hiddenWhileLinksOff,
-      );
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
-        tool("t3_swarm", "Runs a swarm."),
-        tool("post_message", "Posts to the board."),
-        tool("read_board", "Reads the board."),
-        tool("swarm_wait", "Waits for board posts."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
-        typedTool,
-        linkedOnlyTool,
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -2309,14 +2291,8 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
             OptionalToolkit,
             McpToolAccess.toLayer(OptionalToolkit, {
               delegate_task: reads,
-              t3_swarm: reads,
-              post_message: reads,
-              read_board: reads,
-              swarm_wait: reads,
               preview_open: reads,
               schedule_task: reads,
-              open_url: McpToolAccess.readsAsCaller(({ url }) => Effect.succeed({ opened: url })),
-              linked_only: reads,
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2334,12 +2310,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         Layer.build,
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const session = (token: string, exposure?: "deferred" | "proxy") =>
+      const session = (token: string, deferred: boolean) =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
             authorization: `Bearer ${token}`,
-            ...(exposure ? { "t3-tool-exposure": exposure } : {}),
+            ...(deferred ? { "t3-tool-exposure": "deferred" } : {}),
           };
           const initialize = yield* httpClient.post("/mcp", {
             headers,
@@ -2348,7 +2324,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               "application/json",
             ),
           });
-          const rpcRaw = (method: string, params: object) =>
+          const rpc = (method: string, params: object) =>
             httpClient
               .post("/mcp", {
                 headers: {
@@ -2363,18 +2339,15 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               })
               .pipe(
                 Effect.flatMap((response) => response.text),
-                Effect.map((raw) => ({
-                  raw,
-                  // tool_search in deferred mode answers over SSE, after its list_changed notification.
-                  body: raw
+                // tool_search answers over SSE, after its list_changed notification.
+                Effect.map((text): unknown =>
+                  text
                     .split("\n")
                     .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
                     .map((line) => JSON.parse(line.replace(/^data: /u, "")) as { id?: number })
-                    .find((message) => message.id === 2) as unknown,
-                })),
+                    .find((message) => message.id === 2),
+                ),
               );
-          const rpc = (method: string, params: object) =>
-            rpcRaw(method, params).pipe(Effect.map(({ body }) => body));
           return {
             listed: rpc("tools/list", {}).pipe(
               Effect.map((body) =>
@@ -2383,214 +2356,25 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
                   .sort(),
               ),
             ),
-            callRaw: (name: string, args: object) =>
-              rpcRaw("tools/call", { name, arguments: args }),
             call: (name: string, args: object) =>
               rpc("tools/call", { name, arguments: args }).pipe(
-                Effect.map(
-                  (body) =>
-                    (
-                      body as {
-                        result: {
-                          isError?: boolean;
-                          structuredContent?: unknown;
-                          content?: ReadonlyArray<{ type: string; text?: string }>;
-                        };
-                      }
-                    ).result,
-                ),
+                Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
               ),
           };
         });
 
-      const deferring = yield* session("deferringToken", "deferred");
-      const proxied = yield* session("deferringToken", "proxy");
-      const other = yield* session("otherToken");
-
-      // Deferred mode (Copilot CLI) keeps only the upstream direct tools — no swarm tools or t3_call.
+      const deferring = yield* session("deferringToken", true);
+      const other = yield* session("otherToken", false);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual([
-        "delegate_task",
-        "open_url",
-        "post_message",
-        "preview_open",
-        "read_board",
-        "schedule_task",
-        "swarm_wait",
-        "t3_swarm",
-      ]);
+      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
-      const deferredSearch = yield* deferring.callRaw("tool_search", { query: "browser" });
-      expect(deferredSearch.raw).toContain("notifications/tools/list_changed");
       expect(
-        (deferredSearch.body as { result: { structuredContent?: unknown } }).result
-          .structuredContent,
+        (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual([
-        "delegate_task",
-        "open_url",
-        "post_message",
-        "preview_open",
-        "read_board",
-        "schedule_task",
-        "swarm_wait",
-        "t3_swarm",
-      ]);
-
-      // Proxy mode (Antigravity) lists a fixed compact set including swarm tools + tool_search + t3_call.
-      const proxyDirect = [
-        "delegate_task",
-        "post_message",
-        "read_board",
-        "swarm_wait",
-        "t3_call",
-        "t3_swarm",
-        "tool_search",
-      ];
-      expect(yield* proxied.listed).toEqual(proxyDirect);
-
-      // In proxy mode, tool_search returns compact inputSchema without mutating tools/list or emitting list_changed.
-      const proxySearch = yield* proxied.callRaw("tool_search", { query: "browser" });
-      expect(proxySearch.raw).not.toContain("notifications/tools/list_changed");
-      expect(
-        (proxySearch.body as { result: { structuredContent?: unknown } }).result.structuredContent,
-      ).toEqual({
-        tools: [
-          {
-            name: "preview_open",
-            description: "Opens a browser preview.",
-            inputSchema: expect.objectContaining({ type: "object" }),
-          },
-        ],
-      });
-      expect(yield* proxied.listed).toEqual(proxyDirect);
-
-      // t3_call invokes unlisted tools in the same turn, passes typed/JSON arguments, and enforces guards & EnabledWhen.
-      expect(
-        (yield* proxied.call("t3_call", { tool: "preview_open", arguments: {} })).structuredContent,
-      ).toEqual({});
-      expect(
-        (yield* proxied.call("t3_call", {
-          tool: "open_url",
-          arguments: { url: "https://example.com" },
-        })).structuredContent,
-      ).toEqual({ opened: "https://example.com" });
-      expect(
-        (yield* proxied.call("t3_call", { tool: "schedule_task", arguments: "{}" }))
-          .structuredContent,
-      ).toEqual({});
-      expect(yield* proxied.call("t3_call", { tool: "open_url", arguments: {} })).toMatchObject({
-        isError: true,
-      });
-      expect(yield* proxied.call("t3_call", { tool: "linked_only", arguments: {} })).toMatchObject({
-        isError: true,
-        content: [{ type: "text", text: expect.stringContaining("not available in this session") }],
-      });
-      expect(yield* proxied.call("t3_call", { tool: "t3_call", arguments: {} })).toMatchObject({
-        isError: true,
-      });
-      expect(
-        yield* proxied.call("t3_call", { tool: "does_not_exist", arguments: {} }),
-      ).toMatchObject({
-        isError: true,
-      });
-
-      // Prefixed T3 tool names normalize cleanly, recursion stays blocked, and stray toolSummary is stripped.
-      expect(
-        (yield* proxied.call("t3_call", {
-          tool: "mcp_t3-code_open_url",
-          arguments: { url: "https://prefixed.example", toolSummary: "Open prefixed URL" },
-        })).structuredContent,
-      ).toEqual({ opened: "https://prefixed.example" });
-      expect(
-        yield* proxied.call("t3_call", { tool: "mcp_t3-code_t3_call", arguments: {} }),
-      ).toMatchObject({
-        isError: true,
-      });
-
-      // Stateless 2026-07-28 (negotiated by agy via server/discover) has no McpServerClient; t3_call must still work.
-      const statelessRpc = (method: string, params: Record<string, unknown>) =>
-        httpClient
-          .post("/mcp", {
-            headers: {
-              accept: "application/json, text/event-stream",
-              authorization: "Bearer deferringToken",
-              "t3-tool-exposure": "proxy",
-              "mcp-method": method,
-              "mcp-protocol-version": "2026-07-28",
-              ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
-            },
-            body: HttpBody.text(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id: 9,
-                method,
-                params: {
-                  ...params,
-                  _meta: {
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                    "io.modelcontextprotocol/clientCapabilities": {},
-                    "io.modelcontextprotocol/clientInfo": { name: "agy-probe", version: "1.5.16" },
-                  },
-                },
-              }),
-              "application/json",
-            ),
-          })
-          .pipe(
-            Effect.flatMap((response) => response.json),
-            Effect.map(
-              (body) =>
-                body as {
-                  error?: unknown;
-                  result?: {
-                    tools?: ReadonlyArray<{ name: string }>;
-                    isError?: boolean;
-                    structuredContent?: unknown;
-                  };
-                },
-            ),
-          );
-      const statelessListed = yield* statelessRpc("tools/list", {});
-      expect(statelessListed.error).toBeUndefined();
-      expect(statelessListed.result?.tools?.map((item) => item.name).sort()).toEqual(proxyDirect);
-      const statelessSearch = yield* statelessRpc("tools/call", {
-        name: "tool_search",
-        arguments: { query: "browser" },
-      });
-      expect(statelessSearch.error).toBeUndefined();
-      expect(statelessSearch.result?.structuredContent).toEqual({
-        tools: [
-          {
-            name: "preview_open",
-            description: "Opens a browser preview.",
-            inputSchema: expect.objectContaining({ type: "object" }),
-          },
-        ],
-      });
-      const statelessCall = yield* statelessRpc("tools/call", {
-        name: "t3_call",
-        arguments: {
-          tool: "mcp_t3-code_open_url",
-          arguments: { url: "https://stateless.example", toolSummary: "Open over 2026-07-28" },
-        },
-      });
-      expect(statelessCall.error).toBeUndefined();
-      expect(statelessCall.result).toMatchObject({
-        isError: false,
-        structuredContent: {
-          opened: "https://stateless.example",
-        },
-      });
-      const statelessDisabled = yield* statelessRpc("tools/call", {
-        name: "t3_call",
-        arguments: { tool: "linked_only", arguments: {} },
-      });
-      expect(statelessDisabled.error).toBeUndefined();
-      expect(statelessDisabled.result?.isError).toBe(true);
+      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

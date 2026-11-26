@@ -58,14 +58,11 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import * as McpWebhookTransport from "./McpWebhookTransport.ts";
+import * as T3Call from "../agy/mcpT3Call.ts";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
-import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import {
-  MCP_TOOL_EXPOSURE_HEADER,
-  type McpToolExposureMode,
-} from "@t3tools/provider-core/server/mcpSession";
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -390,9 +387,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    const exposureHeader = request.headers[MCP_TOOL_EXPOSURE_HEADER];
-    const toolExposure: McpToolExposureMode | undefined =
-      exposureHeader === "deferred" || exposureHeader === "proxy" ? exposureHeader : undefined;
     return {
       ...limited,
       linkedEnvironments,
@@ -400,7 +394,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       workflows,
       origin,
       ...(forge === undefined ? {} : { forge }),
-      ...(toolExposure === undefined ? {} : { toolExposure }),
+      ...T3Call.toolExposureField(request.headers[MCP_TOOL_EXPOSURE_HEADER]),
     };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
@@ -1398,6 +1392,8 @@ const provideRegistrationServices = <Services>() =>
     ),
   );
 
+// Fork: `t3_call` for the proxy tool exposure (see ../agy/mcpT3Call.ts). Registration and
+// dispatch stay here, the only file allowed to touch McpServer.
 type DirectToolEntry = {
   readonly tool: McpSchema.Tool;
   readonly annotations: Context.Context<never>;
@@ -1413,6 +1409,7 @@ const directToolsByServer = new WeakMap<
 /**
  * Records each registered tool's wrapped handler and registration services so `t3_call` can
  * dispatch in-process on both stateful (`2025-06-18`) and stateless (`2026-07-28`) transports.
+ * Wraps the whole registration chain, so it records the fully wrapped handler.
  */
 const withDirectDispatch = Effect.fn("McpHttpServer.withDirectDispatch")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
@@ -1443,6 +1440,65 @@ const withDirectDispatch = Effect.fn("McpHttpServer.withDirectDispatch")(functio
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, dispatchingServer));
 });
 
+const registerT3Call = Effect.fn("McpHttpServer.registerT3Call")(function* () {
+  const server = yield* McpServer.McpServer;
+  yield* server.addTool({
+    tool: T3Call.tool,
+    annotations: Context.make(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
+    handle: (payload) =>
+      Effect.withFiber((fiber) =>
+        Effect.gen(function* () {
+          const invocation = Context.getOrUndefined(
+            fiber.context,
+            McpInvocationContext.McpInvocationContext,
+          );
+          const target = T3Call.parsePayload(payload, invocation?.thread !== undefined);
+          if ("error" in target) return target.error;
+          const requestContext = Context.getOrUndefined(fiber.context, McpSchema.McpRequestContext);
+          const client = Context.getOrUndefined(fiber.context, McpSchema.McpServerClient);
+          if (requestContext === undefined && client === undefined) {
+            return yield* new McpSchema.InternalError({
+              message: "MCP client context is unavailable for t3_call.",
+            });
+          }
+          const directEntry = directToolsByServer.get(server.tools)?.get(target.name);
+          const entry = directEntry ?? server.tools.find(({ tool }) => tool.name === target.name);
+          if (entry === undefined) return T3Call.unknownToolError(target.name);
+          const enabledWhen = Context.getOrUndefined(entry.annotations, McpSchema.EnabledWhen);
+          const clientInfo = requestContext?.clientInfo ?? client?.clientInfo;
+          if (
+            enabledWhen !== undefined &&
+            !enabledWhen({
+              protocolVersion: requestContext?.protocolVersion ?? client!.protocolVersion,
+              capabilities: requestContext?.clientCapabilities ?? client!.clientCapabilities,
+              ...(clientInfo === undefined ? {} : { clientInfo }),
+            })
+          ) {
+            return T3Call.unavailableToolError(target.name);
+          }
+          const args = T3Call.withoutUnacceptedToolSummary(entry.tool, target.args);
+          if (directEntry !== undefined) {
+            return yield* directEntry.handle(args).pipe(
+              Effect.updateContext((request: Context.Context<McpSchema.McpRequestContext>) =>
+                Context.merge(directEntry.services, request),
+              ),
+              Effect.catch((error) => Effect.succeed(T3Call.error(error.message))),
+            );
+          }
+          if (client === undefined) {
+            return yield* new McpSchema.InternalError({
+              message: "MCP client context is unavailable for t3_call.",
+            });
+          }
+          return yield* server.callTool({ name: target.name, arguments: args }).pipe(
+            Effect.provideService(McpSchema.McpServerClient, client),
+            Effect.catch((error) => Effect.succeed(T3Call.error(error.message))),
+          );
+        }),
+      ),
+  });
+});
+
 /**
  * Tools declare their handler services as request-level dependencies. Those
  * built with the server are provided here; `McpInvocationContext` is left to
@@ -1453,20 +1509,15 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withDirectDispatch(
-      withToolAnalytics(
-        withToolResultCapture(
-          withToolSpans(
-            withClientInput(
-              withAdvertisedSchemas(
-                toolkit,
-                McpServer.registerToolkit(decodeAsAdvertised(toolkit)),
-              ),
-            ),
+    withToolAnalytics(
+      withToolResultCapture(
+        withToolSpans(
+          withClientInput(
+            withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
           ),
         ),
       ),
-    ),
+    ).pipe(withDirectDispatch),
   ).pipe(
     Layer.provide(
       provideRegistrationServices<
@@ -1482,7 +1533,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withDirectDispatch(withToolAnalytics(withToolResultCapture(withToolSpans(register)))),
+    withToolAnalytics(withToolResultCapture(withToolSpans(register))).pipe(withDirectDispatch),
   ).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
 
 export const layerHtmlToolkit = Layer.mergeAll(
@@ -1622,164 +1673,6 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
   layerMessageToolkit,
 );
-
-const decodeJsonObjectArg = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
-
-const normalizeT3CallTarget = (raw: string): string => {
-  const trimmed = raw.trim();
-  const known = resolveT3McpToolId(trimmed);
-  if (known !== null) return known;
-  const stripped = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(trimmed);
-  return stripped?.groups?.tool?.trim() || trimmed;
-};
-
-const toolAcceptsProperty = (tool: McpSchema.Tool, property: string): boolean => {
-  const schema = tool.inputSchema;
-  if (!Predicate.isReadonlyObject(schema)) return false;
-  const properties = schema.properties;
-  return Predicate.isReadonlyObject(properties) && Object.hasOwn(properties, property);
-};
-
-const t3CallError = (message: string) =>
-  new McpSchema.CallToolResult({
-    isError: true,
-    content: [{ type: "text", text: message }],
-  });
-
-const registerT3Call = Effect.fn("McpHttpServer.registerT3Call")(function* () {
-  const server = yield* McpServer.McpServer;
-  yield* server.addTool({
-    tool: new McpSchema.Tool({
-      name: McpToolExposure.T3_CALL,
-      description:
-        "Invoke any T3 Code tool found via tool_search in the same turn. Pass the exact tool name and an arguments object matching its inputSchema.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          tool: {
-            type: "string",
-            description:
-              "Exact T3 Code tool name returned by tool_search (e.g. preview_open, t3_thread_read).",
-          },
-          arguments: {
-            type: "object",
-            description: "Arguments object matching the tool's inputSchema from tool_search.",
-          },
-        },
-        required: ["tool"],
-      },
-      annotations: {
-        title: "Call a T3 Code tool",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    }),
-    annotations: Context.make(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
-    handle: (payload) =>
-      Effect.withFiber((fiber) =>
-        Effect.gen(function* () {
-          const invocation = Context.getOrUndefined(
-            fiber.context,
-            McpInvocationContext.McpInvocationContext,
-          );
-          if (invocation === undefined || invocation.thread === undefined) {
-            return t3CallError(
-              "t3_call acts as the calling T3 thread and requires an agent running inside T3 Code.",
-            );
-          }
-          if (!Predicate.isReadonlyObject(payload) || Array.isArray(payload)) {
-            return t3CallError("t3_call expects an object with { tool, arguments }.");
-          }
-          const targetName =
-            typeof payload.tool === "string" ? normalizeT3CallTarget(payload.tool) : "";
-          if (targetName.length === 0) {
-            return t3CallError(
-              "t3_call requires a non-empty `tool` string. Call tool_search to find available tools.",
-            );
-          }
-          if (targetName === McpToolExposure.T3_CALL) {
-            return t3CallError(
-              "Cannot invoke t3_call recursively. Pass the target T3 Code tool name directly.",
-            );
-          }
-          let targetArgs: Record<string, unknown> = {};
-          const rawArgs = payload.arguments;
-          if (rawArgs !== undefined && rawArgs !== null) {
-            if (typeof rawArgs === "string") {
-              const parsed = decodeJsonObjectArg(rawArgs);
-              if (
-                Option.isNone(parsed) ||
-                !Predicate.isReadonlyObject(parsed.value) ||
-                Array.isArray(parsed.value)
-              ) {
-                return t3CallError(
-                  `t3_call \`arguments\` for ${targetName} must be a JSON object matching its inputSchema.`,
-                );
-              }
-              targetArgs = { ...parsed.value };
-            } else if (Predicate.isReadonlyObject(rawArgs) && !Array.isArray(rawArgs)) {
-              targetArgs = { ...rawArgs };
-            } else {
-              return t3CallError(
-                `t3_call \`arguments\` for ${targetName} must be an object matching its inputSchema.`,
-              );
-            }
-          }
-          const requestContext = Context.getOrUndefined(fiber.context, McpSchema.McpRequestContext);
-          const client = Context.getOrUndefined(fiber.context, McpSchema.McpServerClient);
-          if (requestContext === undefined && client === undefined) {
-            return yield* new McpSchema.InternalError({
-              message: "MCP client context is unavailable for t3_call.",
-            });
-          }
-          const directEntry = directToolsByServer.get(server.tools)?.get(targetName);
-          const entry = directEntry ?? server.tools.find(({ tool }) => tool.name === targetName);
-          if (entry === undefined) {
-            return t3CallError(
-              `Unknown T3 Code tool "${targetName}". Call tool_search to find available tools and their schemas.`,
-            );
-          }
-          const enabledWhen = Context.getOrUndefined(entry.annotations, McpSchema.EnabledWhen);
-          const clientInfo = requestContext?.clientInfo ?? client?.clientInfo;
-          if (
-            enabledWhen !== undefined &&
-            !enabledWhen({
-              protocolVersion: requestContext?.protocolVersion ?? client!.protocolVersion,
-              capabilities: requestContext?.clientCapabilities ?? client!.clientCapabilities,
-              ...(clientInfo === undefined ? {} : { clientInfo }),
-            })
-          ) {
-            return t3CallError(
-              `T3 Code tool "${targetName}" is not available in this session. Call tool_search to see enabled tools.`,
-            );
-          }
-          if ("toolSummary" in targetArgs && !toolAcceptsProperty(entry.tool, "toolSummary")) {
-            const { toolSummary: _toolSummary, ...rest } = targetArgs;
-            targetArgs = rest;
-          }
-          if (directEntry !== undefined) {
-            return yield* directEntry.handle(targetArgs).pipe(
-              Effect.updateContext((request: Context.Context<McpSchema.McpRequestContext>) =>
-                Context.merge(directEntry.services, request),
-              ),
-              Effect.catch((error) => Effect.succeed(t3CallError(error.message))),
-            );
-          }
-          if (client === undefined) {
-            return yield* new McpSchema.InternalError({
-              message: "MCP client context is unavailable for t3_call.",
-            });
-          }
-          return yield* server.callTool({ name: targetName, arguments: targetArgs }).pipe(
-            Effect.provideService(McpSchema.McpServerClient, client),
-            Effect.catch((error) => Effect.succeed(t3CallError(error.message))),
-          );
-        }),
-      ),
-  });
-});
 
 const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
