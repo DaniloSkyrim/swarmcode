@@ -69,9 +69,11 @@ export function useSwarmSurface(
     const panels = useRightPanelStore.getState();
     const revision = panels.getUserActionRevision(watchRef);
     const openBoard = () => {
-      useRightPanelStore
-        .getState()
-        .openProactive(watchRef, { id: "swarm", kind: "swarm" }, revision);
+      const store = useRightPanelStore.getState();
+      const opened = store.openProactive(watchRef, { id: "swarm", kind: "swarm" }, revision);
+      if (opened) {
+        store.setThreadPanelOpen(watchRef, "inline", false);
+      }
     };
     const isFreshSwarmOpen = sawNoSwarmKeyRef.current === watchKey;
     const prefersReducedMotion =

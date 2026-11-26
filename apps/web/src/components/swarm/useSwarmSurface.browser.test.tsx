@@ -9,7 +9,11 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
-import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import {
+  selectActiveRightPanelSurface,
+  selectThreadPanelOpen,
+  useRightPanelStore,
+} from "~/rightPanelStore";
 import { cancelSwarmEntrance, getActiveSwarmEntrance } from "./swarmEntranceStore";
 
 const swarmState = vi.hoisted(() => ({
@@ -103,13 +107,39 @@ describe("useSwarmSurface entrance trigger", () => {
     expect(entrance).not.toBeNull();
     expect(entrance?.composerRect?.width).toBeGreaterThan(100);
 
-    // Executing onRevealBoard opens the right panel proactively.
+    // Executing onRevealBoard opens the right panel proactively and minimizes inline thread details.
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        threadRef,
+        "inline",
+      ),
+    ).toBe(true);
     await act(() => {
       entrance!.onRevealBoard();
     });
     expect(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef)?.kind,
     ).toBe("swarm");
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        threadRef,
+        "inline",
+      ),
+    ).toBe(false);
+
+    // User can always re-open thread details from the header toggle afterwards.
+    await act(() => {
+      useRightPanelStore.getState().toggleThreadPanel(threadRef, "inline");
+    });
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        threadRef,
+        "inline",
+      ),
+    ).toBe(true);
 
     // Clearing the entrance and manually toggling closed/open never replays the entrance animation.
     cancelSwarmEntrance();
@@ -118,6 +148,41 @@ describe("useSwarmSurface entrance trigger", () => {
       latestSurface?.addSwarmSurface();
     });
     expect(getActiveSwarmEntrance()).toBeNull();
+  });
+
+  it("keeps thread details open if the user took over the right panel before reveal", async () => {
+    using _cleanup = disposableSwarmTestState();
+    using _mm = stubGlobal("matchMedia", makeMatchMedia(false));
+    const threadRef: ScopedThreadRef = {
+      environmentId: EnvironmentId.make("env-1"),
+      threadId: ThreadId.make("thread-user-override"),
+    };
+
+    swarmState.loaded = true;
+    swarmState.swarm = null;
+    await using screen = await render(<Harness threadRef={threadRef} tick={0} />);
+
+    swarmState.swarm = makeSwarm(threadRef.threadId);
+    await screen.rerender(<Harness threadRef={threadRef} tick={1} />);
+
+    const entrance = getActiveSwarmEntrance();
+    expect(entrance).not.toBeNull();
+
+    // User interacts with the right panel mid-flight, so proactive open refuses and details stay open.
+    await act(() => {
+      useRightPanelStore.getState().markUserAction(threadRef);
+      entrance!.onRevealBoard();
+    });
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef),
+    ).toBeNull();
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        threadRef,
+        "inline",
+      ),
+    ).toBe(true);
   });
 
   it("opens directly without animating when loading a thread that already has a swarm", async () => {
@@ -157,5 +222,12 @@ describe("useSwarmSurface entrance trigger", () => {
     expect(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef)?.kind,
     ).toBe("swarm");
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        threadRef,
+        "inline",
+      ),
+    ).toBe(false);
   });
 });

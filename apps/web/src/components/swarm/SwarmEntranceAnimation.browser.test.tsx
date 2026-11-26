@@ -13,7 +13,6 @@ import {
   computeSwarmDetailsCardPresentation,
   computeSwarmPanelPresentation,
   recoverStrandedDetailsCard,
-  resolveSwarmDetailsCardBehavior,
   resolveSwarmDetailsCardTuckOffset,
   SWARM_ENTRANCE_TIMING,
   SwarmEntranceOverlay,
@@ -118,8 +117,8 @@ function stubVisibilityState(state: DocumentVisibilityState): Disposable {
   };
 }
 
-/** Real-app DOM the runner drives: a canvas too narrow to keep the details card inline. */
-function mountCollapseLayoutFixture(): Disposable & {
+/** Real-app DOM the runner drives, even on a wide canvas where native layout would stay inline. */
+function mountLayoutFixture(canvasWidthPx = 1800): Disposable & {
   readonly shell: HTMLElement;
   readonly details: HTMLElement;
   readonly toggle: HTMLElement;
@@ -127,7 +126,7 @@ function mountCollapseLayoutFixture(): Disposable & {
   const root = document.createElement("div");
   root.innerHTML = `
     <span data-thread-panel-toggle style="position:fixed;left:900px;top:8px;width:28px;height:28px"></span>
-    <div data-chat-canvas style="position:relative;width:1200px;height:600px">
+    <div data-chat-canvas style="position:relative;width:${canvasWidthPx}px;height:600px">
       <aside data-thread-details-panel="inline" style="position:absolute;right:12px;top:12px;width:280px;height:400px"></aside>
     </div>
     <div data-right-panel-shell="true" style="--resizable-width:600px;width:var(--resizable-width)"></div>`;
@@ -199,73 +198,7 @@ describe("SwarmEntranceAnimation", () => {
     expect(getActiveSwarmEntrance()).toBeNull();
   });
 
-  it("choreographs inline ThreadDetailsCard cleanly for both collapse and stay-inline viewports", async () => {
-    expect(
-      resolveSwarmDetailsCardBehavior({
-        hasInlineDetailsCard: false,
-        canvasWidth: 1600,
-        panelTargetWidth: 540,
-      }),
-    ).toBe("none");
-
-    // Standard desktop window: 1216 - 540 = 676px < 1012px threshold -> collapses smoothly.
-    expect(
-      resolveSwarmDetailsCardBehavior({
-        hasInlineDetailsCard: true,
-        canvasWidth: 1216,
-        panelTargetWidth: 540,
-      }),
-    ).toBe("collapse");
-
-    // Wide window / collapsed sidebar: 1624 - 480 = 1144px >= 1012px threshold -> stays inline.
-    expect(
-      resolveSwarmDetailsCardBehavior({
-        hasInlineDetailsCard: true,
-        canvasWidth: 1624,
-        panelTargetWidth: 480,
-      }),
-    ).toBe("stay-inline");
-
-    const collapseMid = computeSwarmDetailsCardPresentation("collapse", 540, 0, 540);
-    expect(collapseMid.opacity).toBeGreaterThan(0);
-    expect(collapseMid.opacity).toBeLessThan(1);
-    expect(collapseMid.scale).toBeLessThan(1);
-
-    const collapseAtReveal = computeSwarmDetailsCardPresentation("collapse", 840, 0, 540);
-    expect(collapseAtReveal.opacity).toBe(0);
-    expect(collapseAtReveal.togglePulse).toBeGreaterThan(0.5);
-
-    // Stay-inline mode opens a 104px portal corridor before reveal and blends monotonically to 0 at dock.
-    const stayPreReveal = computeSwarmDetailsCardPresentation("stay-inline", 839, 0, 480);
-    expect(stayPreReveal.translateXPx).toBeLessThan(-96);
-    expect(stayPreReveal.opacity).toBe(1);
-
-    const stayHalf = computeSwarmDetailsCardPresentation("stay-inline", 1150, 240, 480);
-    expect(stayHalf.translateXPx).toBeCloseTo(-52, 1);
-
-    const stayDone = computeSwarmDetailsCardPresentation("stay-inline", 2350, 480, 480);
-    expect(stayDone.translateXPx).toBe(0);
-    expect(stayDone.opacity).toBe(1);
-
-    await using screen = await render(
-      <SwarmEntranceScene
-        timeMs={1250}
-        composerRect={{ left: 320, top: 760, width: 720, height: 112 }}
-        viewport={{ width: 1680, height: 900 }}
-        panelTargetWidth={480}
-        detailsCard={{
-          behavior: "stay-inline",
-          rect: { left: 1388, top: 60, width: 280, height: 404 },
-          toggleRect: { left: 1596, top: 10, width: 28, height: 28 },
-        }}
-      />,
-    );
-    expect(
-      screen.container.querySelector('[data-swarm-entrance-overlay="honeycomb-portal"]'),
-    ).not.toBeNull();
-  });
-
-  it("folds a collapsing card into the toggle center and unfolds it if the layout keeps it inline", () => {
+  it("folds an open inline ThreadDetailsCard into the toggle center and unfolds if stranded", async () => {
     const card = { left: 1388, top: 60, width: 280, height: 404 };
     const toggle = { left: 1596, top: 9, width: 28, height: 28 };
     const offset = resolveSwarmDetailsCardTuckOffset(card, toggle);
@@ -274,18 +207,20 @@ describe("SwarmEntranceAnimation", () => {
     expect(fallback.x).toBeLessThan(0);
     expect(fallback.y).toBeLessThan(0);
 
-    let previous = computeSwarmDetailsCardPresentation("collapse", 0, 0, 540);
+    const collapseMid = computeSwarmDetailsCardPresentation(540, offset);
+    expect(collapseMid.opacity).toBeGreaterThan(0);
+    expect(collapseMid.opacity).toBeLessThan(1);
+    expect(collapseMid.scale).toBeLessThan(1);
+
+    let previous = computeSwarmDetailsCardPresentation(0, offset);
     for (let t = 0; t <= SWARM_ENTRANCE_TIMING.revealAtMs; t += 10) {
-      const frame = computeSwarmDetailsCardPresentation("collapse", t, 0, 540, offset);
+      const frame = computeSwarmDetailsCardPresentation(t, offset);
       expect(frame.scale).toBeLessThanOrEqual(previous.scale);
       expect(frame.opacity).toBeLessThanOrEqual(previous.opacity);
       previous = frame;
     }
     const landed = computeSwarmDetailsCardPresentation(
-      "collapse",
       SWARM_ENTRANCE_TIMING.revealAtMs - 140,
-      0,
-      540,
       offset,
     );
     expect(landed.translateXPx).toBeCloseTo(offset.x, 5);
@@ -294,13 +229,8 @@ describe("SwarmEntranceAnimation", () => {
     expect(landed.opacity).toBe(0);
     expect(landed.togglePulse).toBeGreaterThan(0.8);
     expect(
-      computeSwarmDetailsCardPresentation(
-        "collapse",
-        SWARM_ENTRANCE_TIMING.revealAtMs + 320,
-        540,
-        540,
-        offset,
-      ).togglePulse,
+      computeSwarmDetailsCardPresentation(SWARM_ENTRANCE_TIMING.revealAtMs + 320, offset)
+        .togglePulse,
     ).toBe(0);
 
     expect(recoverStrandedDetailsCard(landed, 0)).toEqual(landed);
@@ -311,29 +241,27 @@ describe("SwarmEntranceAnimation", () => {
       opacity: 1,
       togglePulse: landed.togglePulse,
     });
-  });
 
-  it("moves a stay-inline card monotonically left with no snap across the reveal", () => {
-    const target = 480;
-    let previousLeft = 0;
-    for (let t = 0; t <= SWARM_ENTRANCE_TIMING.durationMs; t += 4) {
-      const panel = computeSwarmPanelPresentation(t, target);
-      const card = computeSwarmDetailsCardPresentation("stay-inline", t, panel.widthPx, target);
-      // The card is right-anchored to a canvas that shrinks by the panel width.
-      const left = -panel.widthPx + card.translateXPx;
-      expect(left).toBeLessThanOrEqual(previousLeft + 1e-9);
-      expect(previousLeft - left).toBeLessThan(target * 0.2);
-      previousLeft = left;
-    }
-    expect(previousLeft).toBe(-target);
+    await using screen = await render(
+      <SwarmEntranceScene
+        timeMs={740}
+        composerRect={{ left: 320, top: 760, width: 720, height: 112 }}
+        viewport={{ width: 1680, height: 900 }}
+        panelTargetWidth={480}
+        detailsCard={{ rect: card, toggleRect: toggle }}
+      />,
+    );
+    expect(
+      screen.container.querySelector('[data-swarm-entrance-overlay="honeycomb-portal"]'),
+    ).not.toBeNull();
   });
 });
 
 describe("SwarmEntranceOverlay runner", () => {
-  it("drives the real panel to its --resizable-width, tucks the card, and restores every style", async () => {
+  it("drives the real panel to its --resizable-width, tucks the card even on wide canvases, and restores every style", async () => {
     using _cleanup = disposableEntranceCleanup();
     using _mm = stubGlobal("matchMedia", makeMatchMedia(false));
-    using fixture = mountCollapseLayoutFixture();
+    using fixture = mountLayoutFixture(1800);
     using frames = manualFrames();
     const onRevealBoard = vi.fn();
     startSwarmEntrance({ threadKey: "env-1:thread-run", composerRect: null, onRevealBoard });
@@ -356,7 +284,7 @@ describe("SwarmEntranceOverlay runner", () => {
     expect(fixture.shell.style.width).toBe("600px");
     expect(fixture.shell.style.transitionProperty).toBe("none");
 
-    // The fixture never unmounts the card, so it is stranded inline and unfolds back.
+    // If onRevealBoard didn't unmount the card (e.g. proactive open refused), it unfolds back.
     await frames.at(2300);
     expect(Number(fixture.details.style.opacity || "1")).toBeGreaterThan(0.95);
 
@@ -375,7 +303,7 @@ describe("SwarmEntranceOverlay runner", () => {
   it("reveals the board once when the entrance is cancelled mid-flight", async () => {
     using _cleanup = disposableEntranceCleanup();
     using _mm = stubGlobal("matchMedia", makeMatchMedia(false));
-    using fixture = mountCollapseLayoutFixture();
+    using fixture = mountLayoutFixture(1800);
     using frames = manualFrames();
     const onRevealBoard = vi.fn();
     startSwarmEntrance({ threadKey: "env-1:thread-cancel", composerRect: null, onRevealBoard });

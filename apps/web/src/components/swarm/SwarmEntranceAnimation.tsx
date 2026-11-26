@@ -1,8 +1,6 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 
 import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
-import { DETAILS_CARD_CLEARANCE } from "../chat/chatCanvasLayout";
-import { THREAD_DETAILS_CARD_GAP } from "../chat/threadDetailsCardLayout";
 import { BeeSprite } from "./SwarmAvatar";
 import { type BeeColors, WORKER_BEES } from "./swarmBoard.logic";
 import { SwarmcodeMascotBee, SwarmPixelSparkle } from "./SwarmcodeMascotBee";
@@ -25,10 +23,7 @@ export interface SwarmPanelPresentation {
   readonly chevronClipPx: number;
 }
 
-export type SwarmDetailsCardBehavior = "none" | "collapse" | "stay-inline";
-
 export interface SwarmDetailsCardContext {
-  readonly behavior: SwarmDetailsCardBehavior;
   /** Inline `[data-thread-details-panel="inline"]` bounding rect at t = 0 (viewport coordinates). */
   readonly rect: SwarmComposerRect;
   /** `[data-thread-panel-toggle]` rect at t = 0; the collapsing card folds into its center. */
@@ -60,10 +55,6 @@ const DEFAULT_PANEL_WIDTH = 540;
 const MIN_PANEL_WIDTH = 360;
 const MAX_PANEL_WIDTH_FRACTION = 0.7;
 const SIBLING_COLUMN_MIN_WIDTH = 360;
-const DEFAULT_DETAILS_CARD_WIDTH = 280;
-const DEFAULT_LANE_PADDING = 48;
-const DEFAULT_MIN_CHAT_WIDTH = 640;
-const DETAILS_CARD_PORTAL_CORRIDOR_PX = 104;
 // Card top-right corner to the header toggle center in the default chat header layout.
 const DEFAULT_DETAILS_CARD_TUCK_OFFSET: Vec2 = { x: -58, y: -37 };
 const DETAILS_CARD_TUCK_END_SCALE = 0.08;
@@ -161,33 +152,6 @@ function buildChevronClipPath(chevronClipPx: number): string | undefined {
   return `polygon(0px 50%, ${px}px 0%, 100% 0%, 100% 100%, ${px}px 100%)`;
 }
 
-/**
- * Mirrors `resolveThreadDetailsCardLayout` so the entrance choreography knows in advance
- * whether an open inline thread details card will collapse into its header toggle or stay inline.
- */
-export function resolveSwarmDetailsCardBehavior(input: {
-  readonly hasInlineDetailsCard: boolean;
-  readonly canvasWidth: number;
-  readonly panelTargetWidth: number;
-  readonly detailsCardWidth?: number | undefined;
-  readonly lanePadding?: number | undefined;
-  readonly minChatWidth?: number | undefined;
-}): SwarmDetailsCardBehavior {
-  if (!input.hasInlineDetailsCard) return "none";
-  const cardWidth = input.detailsCardWidth ?? DEFAULT_DETAILS_CARD_WIDTH;
-  const lanePadding = input.lanePadding ?? DEFAULT_LANE_PADDING;
-  const minChatWidth = input.minChatWidth ?? DEFAULT_MIN_CHAT_WIDTH;
-  const remainingCanvasWidth = input.canvasWidth - input.panelTargetWidth;
-  const fitsAfterOpen =
-    remainingCanvasWidth -
-      cardWidth -
-      THREAD_DETAILS_CARD_GAP -
-      DETAILS_CARD_CLEARANCE -
-      lanePadding >=
-    minChatWidth;
-  return fitsAfterOpen ? "stay-inline" : "collapse";
-}
-
 /** Offset from the card's top-right corner (its transform origin) to the toggle's center. */
 export function resolveSwarmDetailsCardTuckOffset(
   cardRect: SwarmComposerRect,
@@ -211,63 +175,33 @@ const IDENTITY_DETAILS_CARD: SwarmDetailsCardPresentation = {
 };
 
 /**
- * Synchronizes `[data-thread-details-panel="inline"]` with the opening Swarm Board:
- * - `"collapse"`: shrinks the card from its top-right corner into `[data-thread-panel-toggle]`
- *   (genie-style), fully hidden before the board opens, while the toggle answers with a pulse.
- * - `"stay-inline"`: opens a 104px corridor for the portal, then yields monotonically to native layout.
+ * Shrinks an open inline `[data-thread-details-panel="inline"]` card from its top-right corner
+ * into `[data-thread-panel-toggle]` before the Swarm Board opens, while the toggle pulses.
  */
 export function computeSwarmDetailsCardPresentation(
-  behavior: SwarmDetailsCardBehavior,
   timeMs: number,
-  panelWidthPx: number,
-  panelTargetWidth: number,
   tuckOffset: SwarmVec2 = DEFAULT_DETAILS_CARD_TUCK_OFFSET,
 ): SwarmDetailsCardPresentation {
-  if (behavior === "none") return IDENTITY_DETAILS_CARD;
   const { revealAtMs } = SWARM_ENTRANCE_TIMING;
-  if (behavior === "collapse") {
-    const rawT = segment(timeMs, DETAILS_CARD_TUCK_START_MS, DETAILS_CARD_TUCK_END_MS);
-    // The toggle lights up as the card arrives, peaks just after, then decays slowly.
-    const pulsePeak = DETAILS_CARD_TUCK_END_MS + 40;
-    const pulseEnd = revealAtMs + 320;
-    const togglePulse =
-      timeMs <= DETAILS_CARD_TUCK_END_MS - 140 || timeMs >= pulseEnd
-        ? 0
-        : timeMs <= pulsePeak
-          ? easeOutCubic(segment(timeMs, DETAILS_CARD_TUCK_END_MS - 140, pulsePeak))
-          : 1 - easeInOutCubic(segment(timeMs, pulsePeak, pulseEnd));
-    if (rawT === 0) return { ...IDENTITY_DETAILS_CARD, togglePulse };
-    const travel = easeInOutCubic(rawT);
-    return {
-      translateXPx: tuckOffset.x * travel,
-      translateYPx: tuckOffset.y * travel,
-      scale: lerp(1, DETAILS_CARD_TUCK_END_SCALE, travel),
-      // Stays readable for the first third so the eye follows it into the toggle.
-      opacity: rawT >= 1 ? 0 : 1 - easeInCubic(segment(rawT, 0.3, 1)),
-      togglePulse,
-    };
-  }
-
-  // "stay-inline": pre-nudge left so the honeycomb portal blooms in clear space, then blend to 0.
-  const nudgeStart = Math.max(260, revealAtMs - 380);
-  if (timeMs < revealAtMs) {
-    const nudgeT = easeInOutCubic(segment(timeMs, nudgeStart, revealAtMs));
-    return {
-      translateXPx: nudgeT === 0 ? 0 : -DETAILS_CARD_PORTAL_CORRIDOR_PX * nudgeT,
-      translateYPx: 0,
-      scale: 1,
-      opacity: 1,
-      togglePulse: 0,
-    };
-  }
-  const progress = clamp01(panelWidthPx / Math.max(1, panelTargetWidth));
-  const remaining = progress >= 1 ? 0 : -DETAILS_CARD_PORTAL_CORRIDOR_PX * (1 - progress);
+  const rawT = segment(timeMs, DETAILS_CARD_TUCK_START_MS, DETAILS_CARD_TUCK_END_MS);
+  // The toggle lights up as the card arrives, peaks just after, then decays slowly.
+  const pulsePeak = DETAILS_CARD_TUCK_END_MS + 40;
+  const pulseEnd = revealAtMs + 320;
+  const togglePulse =
+    timeMs <= DETAILS_CARD_TUCK_END_MS - 140 || timeMs >= pulseEnd
+      ? 0
+      : timeMs <= pulsePeak
+        ? easeOutCubic(segment(timeMs, DETAILS_CARD_TUCK_END_MS - 140, pulsePeak))
+        : 1 - easeInOutCubic(segment(timeMs, pulsePeak, pulseEnd));
+  if (rawT === 0) return { ...IDENTITY_DETAILS_CARD, togglePulse };
+  const travel = easeInOutCubic(rawT);
   return {
-    translateXPx: remaining,
-    translateYPx: 0,
-    scale: 1,
-    opacity: 1,
-    togglePulse: 0,
+    translateXPx: tuckOffset.x * travel,
+    translateYPx: tuckOffset.y * travel,
+    scale: lerp(1, DETAILS_CARD_TUCK_END_SCALE, travel),
+    // Stays readable for the first third so the eye follows it into the toggle.
+    opacity: rawT >= 1 ? 0 : 1 - easeInCubic(segment(rawT, 0.3, 1)),
+    togglePulse,
   };
 }
 
@@ -377,9 +311,7 @@ export function SwarmEntranceScene(props: {
   const composer = props.composerRect ?? defaultComposerRect(viewport);
   const panel = props.panelPresentation ?? computeSwarmPanelPresentation(timeMs, panelTargetWidth);
 
-  const cardStaysInline = detailsCard?.behavior === "stay-inline";
   const cardRect = detailsCard?.rect ?? null;
-  const cardBottom = cardRect ? cardRect.top + cardRect.height : 0;
 
   const startX = composer.left + composer.width * 0.72;
   const composerTop = composer.top;
@@ -391,17 +323,8 @@ export function SwarmEntranceScene(props: {
   const chevronDepth = panel.chevronClipPx;
 
   const p0: Vec2 = { x: startX, y: composerTop + 28 };
-  const p1: Vec2 = {
-    x: startX + 36,
-    y: cardStaysInline ? Math.max(cardBottom + 36, composerTop - 190) : composerTop - 210,
-  };
-  const p2: Vec2 = {
-    x: lerp(startX, edgeX, 0.72),
-    y:
-      cardStaysInline && cardRect
-        ? Math.min(viewport.height - 96, Math.max(edgeY + 34, cardBottom + 32))
-        : edgeY - 90,
-  };
+  const p1: Vec2 = { x: startX + 36, y: composerTop - 210 };
+  const p2: Vec2 = { x: lerp(startX, edgeX, 0.72), y: edgeY - 90 };
   const p3: Vec2 = { x: edgeX, y: edgeY };
 
   const flyT = segment(timeMs, 40, 720);
@@ -409,18 +332,8 @@ export function SwarmEntranceScene(props: {
   const perchT = segment(timeMs, 920, 1180);
   const exitT = segment(timeMs, 1760, 2350);
 
-  const perchBelowInlineCard =
-    cardStaysInline &&
-    cardRect !== null &&
-    cardBottom + 96 < composerTop &&
-    cardBottom + 110 < viewport.height;
-  const hoverLeftX =
-    cardStaysInline && cardRect !== null && !perchBelowInlineCard
-      ? Math.max(80, panelFinalLeftX - THREAD_DETAILS_CARD_GAP - cardRect.width - 56)
-      : panelFinalLeftX - 68;
-  const hoverTopY = perchBelowInlineCard
-    ? Math.min(viewport.height - 130, cardBottom + 44)
-    : Math.max(94, viewport.height * 0.115);
+  const hoverLeftX = panelFinalLeftX - 68;
+  const hoverTopY = Math.max(94, viewport.height * 0.115);
 
   let mascotX = p0.x;
   let mascotY = p0.y;
@@ -447,15 +360,15 @@ export function SwarmEntranceScene(props: {
   } else if (timeMs < 1760) {
     mascotFacing = "left";
     const eased = easeOutCubic(perchT);
-    const arcLift = Math.sin(perchT * Math.PI) * (perchBelowInlineCard ? -32 : 48);
+    const arcLift = Math.sin(perchT * Math.PI) * 48;
     mascotX = lerp(edgeX, hoverLeftX, eased);
     mascotY = lerp(edgeY, hoverTopY, eased) - arcLift + Math.sin(timeMs * 0.014) * 5;
-    mascotRotate = lerp(perchBelowInlineCard ? 10 : -14, 0, eased);
+    mascotRotate = lerp(-14, 0, eased);
   } else {
     mascotFacing = "left";
-    mascotX = hoverLeftX - easeOutCubic(exitT) * (cardStaysInline ? 22 : 34);
-    mascotY = hoverTopY + easeOutCubic(exitT) * (perchBelowInlineCard ? 36 : -40);
-    mascotRotate = (perchBelowInlineCard ? 8 : -8) * exitT;
+    mascotX = hoverLeftX - easeOutCubic(exitT) * 34;
+    mascotY = hoverTopY - easeOutCubic(exitT) * 40;
+    mascotRotate = -8 * exitT;
     mascotScale = 1 - exitT * 0.2;
     mascotOpacity = 1 - easeInOutCubic(exitT);
   }
@@ -493,11 +406,6 @@ export function SwarmEntranceScene(props: {
   const riftBottom = lerp(edgeY, portalBottom, riftOpenT);
   const riftHeight = Math.max(0, riftBottom - riftTop);
 
-  // Live right edge of the inline ThreadDetailsCard so worker bees never cross its 12px gutter.
-  const panelProgress = clamp01(panel.widthPx / Math.max(1, panelTargetWidth));
-  const liveCardRightX =
-    panelLeftX - THREAD_DETAILS_CARD_GAP - DETAILS_CARD_PORTAL_CORRIDOR_PX * (1 - panelProgress);
-
   const fanRatios = [0.12, 0.27, 0.42, 0.58, 0.73, 0.88];
   const fanBeeIndices = [8, 3, 1, 0, 2, 6] as const;
   const fanBees: WorkerBeeFrame[] = [];
@@ -516,7 +424,7 @@ export function SwarmEntranceScene(props: {
       const yFromCenter = lerp(edgeY + norm * 72, targetY, clamp01(fanOpen * 1.4));
 
       const seamXAtY = panelLeftX + distFromMid * chevronDepth;
-      let bx = cardStaysInline ? Math.max(seamXAtY - 8, liveCardRightX + 26) : seamXAtY - 12;
+      let bx = seamXAtY - 12;
       let by = yFromCenter + Math.sin(timeMs * 0.018 + i * 1.1) * 4;
       let rot = norm * 16 * (1 - fanOpen * 0.6) - 6;
       let op = clamp01(segment(timeMs, 840 + distFromMid * 55, 970 + distFromMid * 55));
@@ -525,20 +433,9 @@ export function SwarmEntranceScene(props: {
       if (peelT > 0) {
         const p = easeOutCubic(peelT);
         const dirY = norm < 0 ? -1 : 1;
-        if (cardStaysInline) {
-          // Peel vertically along the docked board border so bees never cross into ThreadDetailsCard.
-          const peelBaseX = Math.max(
-            panelFinalLeftX + 14,
-            panelFinalLeftX - THREAD_DETAILS_CARD_GAP + 26,
-          );
-          bx = peelBaseX + Math.sin(p * Math.PI) * 6;
-          by = targetY + dirY * p * (84 + distFromMid * 52);
-          rot = dirY * 18 * p;
-        } else {
-          bx = panelFinalLeftX - 14 - p * (55 + (1 - distFromMid) * 35);
-          by = targetY + dirY * p * (52 + distFromMid * 44);
-          rot = dirY * 26 * p;
-        }
+        bx = panelFinalLeftX - 14 - p * (55 + (1 - distFromMid) * 35);
+        by = targetY + dirY * p * (52 + distFromMid * 44);
+        rot = dirY * 26 * p;
         op = 1 - easeInOutCubic(peelT);
         sc = 1 - peelT * 0.25;
       }
@@ -571,7 +468,7 @@ export function SwarmEntranceScene(props: {
   }
 
   // Pixel sparkles burst from the header toggle the moment the collapsing card lands in it.
-  if (detailsCard?.behavior === "collapse") {
+  if (detailsCard) {
     const burstT = segment(timeMs, DETAILS_CARD_TUCK_END_MS - 30, DETAILS_CARD_TUCK_END_MS + 390);
     if (burstT > 0 && burstT < 1) {
       const offset = resolveSwarmDetailsCardTuckOffset(detailsCard.rect, detailsCard.toggleRect);
@@ -967,16 +864,9 @@ function measureInitialEntranceLayout(threadKey: string): InitialEntranceLayout 
   );
   const rect = readRect(document.querySelector('[data-thread-details-panel="inline"]'));
   if (!rect) return { panelTargetWidth, detailsCardContext: null };
-  const behavior = resolveSwarmDetailsCardBehavior({
-    hasInlineDetailsCard: true,
-    canvasWidth: initialCanvasWidth,
-    panelTargetWidth,
-    detailsCardWidth: rect.width,
-  });
   return {
     panelTargetWidth,
     detailsCardContext: {
-      behavior,
       rect,
       toggleRect: readRect(document.querySelector("[data-thread-panel-toggle]")),
     },
@@ -1045,14 +935,12 @@ function SwarmEntranceRunner(props: { readonly entrance: ActiveSwarmEntrance }) 
     };
 
     const detailsContext = initialLayout.detailsCardContext;
-    const detailsBehavior = detailsContext?.behavior ?? "none";
     const tuckOffset = detailsContext
       ? resolveSwarmDetailsCardTuckOffset(detailsContext.rect, detailsContext.toggleRect)
       : undefined;
-    const detailsEl =
-      detailsBehavior === "none"
-        ? null
-        : document.querySelector<HTMLElement>('[data-thread-details-panel="inline"]');
+    const detailsEl = detailsContext
+      ? document.querySelector<HTMLElement>('[data-thread-details-panel="inline"]')
+      : null;
     const detailsSnapshot = snapshotStyles(detailsEl, DETAILS_CARD_STYLE_PROPERTIES);
     if (detailsEl) {
       detailsEl.style.transitionProperty = "none";
@@ -1118,16 +1006,10 @@ function SwarmEntranceRunner(props: { readonly entrance: ActiveSwarmEntrance }) 
         if (boundPanel) applyPanelPresentation(boundPanel, pres);
       }
 
-      if (detailsBehavior !== "none") {
-        let cardPres = computeSwarmDetailsCardPresentation(
-          detailsBehavior,
-          elapsed,
-          pres.widthPx,
-          targetWidth,
-          tuckOffset,
-        );
+      if (detailsContext) {
+        let cardPres = computeSwarmDetailsCardPresentation(elapsed, tuckOffset);
         if (detailsEl?.isConnected) {
-          if (detailsBehavior === "collapse" && pres.widthPx >= targetWidth) {
+          if (pres.widthPx >= targetWidth) {
             strandedAtMs ??= elapsed;
             cardPres = recoverStrandedDetailsCard(cardPres, elapsed - strandedAtMs);
           }
