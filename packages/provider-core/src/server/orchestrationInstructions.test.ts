@@ -97,4 +97,24 @@ describe("T3 device instructions", () => {
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
   });
+
+  it("instructs proxy-mode ACP sessions to use tool_search + t3_call instead of shell fallback", () => {
+    const base = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+    const proxy = { ...base, mcpToolExposure: "proxy" as const };
+    const text = t3AcpPromptWithInstructions({ prompt: "Open preview.", state: proxy });
+    assert.include(text, "tool_search");
+    assert.include(text, "t3_call");
+    assert.notInclude(text, "T3_ACP_MCP_CALL");
+    assert.notInclude(text, "Try the name once before you call it absent.");
+
+    // Switching exposure mode triggers re-delivery; identical state skips.
+    assert.equal(
+      t3AcpPromptWithInstructions({ prompt: "Next.", state: proxy, previousState: proxy }),
+      "Next.",
+    );
+    assert.include(
+      t3AcpPromptWithInstructions({ prompt: "Next.", state: proxy, previousState: base }),
+      "t3_call",
+    );
+  });
 });

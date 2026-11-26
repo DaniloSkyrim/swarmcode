@@ -5,6 +5,7 @@ import {
   resolveT3McpSummaryAction,
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
+  unwrapT3McpProxyCall,
 } from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
@@ -69,5 +70,31 @@ describe("resolveT3McpSummaryAction", () => {
       "schedule-update",
     );
     expect(resolveT3McpSummaryAction("delegate_task", { task: "x" })).toBe("delegate");
+    expect(resolveT3McpSummaryAction("t3_swarm", { action: "add" })).toBeNull();
+    expect(resolveT3McpSummaryAction("tool_search", { query: "preview" })).toBeNull();
+    expect(resolveT3McpSummaryAction("t3_call", {})).toBeNull();
+  });
+
+  it("unwraps t3_call proxy invocations to the target tool presentation and summary", () => {
+    expect(
+      unwrapT3McpProxyCall("mcp_t3-code_t3_call", {
+        tool: "preview_act",
+        arguments: '{"action":"type"}',
+      }),
+    ).toEqual({ tool: "preview_act", input: { action: "type" } });
+    expect(
+      resolveT3McpToolDefinition("mcp_t3-code_t3_call", {
+        tool: "preview_act",
+        arguments: { action: "type" },
+      })?.labels,
+    ).toEqual(resolveT3McpToolDefinition("preview_type")?.labels);
+    expect(
+      resolveT3McpSummaryAction("t3_call", {
+        tool: "schedule_task",
+        arguments: { scheduledTaskId: "task-1" },
+      }),
+    ).toBe("schedule-update");
+    expect(unwrapT3McpProxyCall("t3_call", { tool: "t3_call", arguments: {} })).toBeNull();
+    expect(unwrapT3McpProxyCall("t3_call", { tool: "unknown_tool", arguments: {} })).toBeNull();
   });
 });

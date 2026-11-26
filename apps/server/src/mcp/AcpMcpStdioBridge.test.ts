@@ -167,6 +167,33 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("forwards t3-tool-exposure when configured on the stdio bridge", () =>
+    Effect.gen(function* () {
+      const input = new NodeStream.PassThrough();
+      const requests: Array<Headers> = [];
+      const bridge = runAcpMcpStdioBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        toolExposure: "proxy",
+        input,
+        output: { write: () => {} },
+        fetchImplementation: async (_url, init) => {
+          requests.push(new Request("http://127.0.0.1:1/mcp", init).headers);
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        },
+      });
+      const fiber = yield* Effect.forkChild(bridge);
+      input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n`);
+      input.end();
+      yield* Fiber.join(fiber);
+
+      expect(requests[0]?.get("t3-tool-exposure")).toBe("proxy");
+    }),
+  );
+
   it.effect("acknowledges notifications silently and synthesizes errors for failed requests", () =>
     Effect.gen(function* () {
       let call = 0;

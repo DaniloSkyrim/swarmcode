@@ -467,11 +467,24 @@ const make = Effect.gen(function* () {
   const save = (swarm: Board.StoredSwarm) => {
     syncActiveCoordinator(swarm);
     const file = path.join(dir, `${swarm.id}.json`);
-    return encodeJson(swarm).pipe(
-      Effect.flatMap((json) => fileSystem.writeFileString(`${file}.tmp`, json)),
-      Effect.andThen(fileSystem.rename(`${file}.tmp`, file)),
+    return randomUuidV4.pipe(
+      Effect.flatMap((nonce) => {
+        const tmpFile = `${file}.${nonce}.tmp`;
+        return encodeJson(swarm).pipe(
+          Effect.flatMap((json) => fileSystem.writeFileString(tmpFile, json)),
+          Effect.andThen(fileSystem.rename(tmpFile, file)),
+          Effect.catchCause((cause) =>
+            fileSystem
+              .remove(tmpFile)
+              .pipe(
+                Effect.ignore,
+                Effect.andThen(Effect.logWarning("agy swarm save failed", { cause })),
+              ),
+          ),
+        );
+      }),
+      // Always wake parked swarm_wait callers and UI subscribers even if disk persistence failed transiently.
       Effect.andThen(PubSub.publish(changed, swarm.id)),
-      Effect.catchCause((cause) => Effect.logWarning("agy swarm save failed", { cause })),
     );
   };
 
@@ -891,6 +904,7 @@ const make = Effect.gen(function* () {
 
       let forkWorktreePath: string | null = null;
       let forkBranch: string | null = null;
+      let cleanupForkWorktree: Effect.Effect<void> = Effect.void;
       if (spec.workspace === "worktree") {
         const projectRoot = yield* projectRootOf(adderShell.projectId);
         if (projectRoot === null) {
@@ -914,6 +928,18 @@ const make = Effect.gen(function* () {
           );
         forkWorktreePath = created.worktree.path;
         forkBranch = created.worktree.refName;
+        cleanupForkWorktree = gitWorkflow
+          .removeWorktree({ cwd: projectRoot, path: forkWorktreePath, force: true })
+          .pipe(
+            Effect.andThen(
+              gitWorkflow.deleteLocalBranch({
+                cwd: projectRoot,
+                refName: forkBranch,
+                force: true,
+              }),
+            ),
+            Effect.ignore,
+          );
         yield* threads
           .dispatch({
             type: "thread.metadata.update",
@@ -923,20 +949,7 @@ const make = Effect.gen(function* () {
             worktreePath: forkWorktreePath,
           })
           .pipe(
-            Effect.tapError(() =>
-              gitWorkflow
-                .removeWorktree({ cwd: projectRoot, path: forkWorktreePath!, force: true })
-                .pipe(
-                  Effect.andThen(
-                    gitWorkflow.deleteLocalBranch({
-                      cwd: projectRoot,
-                      refName: forkBranch!,
-                      force: true,
-                    }),
-                  ),
-                  Effect.ignore,
-                ),
-            ),
+            Effect.tapError(() => cleanupForkWorktree),
             Effect.mapError(
               (error) =>
                 new AgySwarmError({
@@ -960,6 +973,7 @@ const make = Effect.gen(function* () {
           ...agentSent(true),
         })
         .pipe(
+          Effect.tapError(() => cleanupForkWorktree),
           Effect.mapError(
             (error) => new AgySwarmError({ reason: `Brief failed: ${error.message}` }),
           ),
@@ -1719,7 +1733,7 @@ const make = Effect.gen(function* () {
     // Stay parked until lastReadSeq is recorded under the lock so saveAndDeliver cannot ring in the gap.
     const { posts, timedOut } = yield* Effect.gen(function* () {
       const found = yield* Effect.gen(function* () {
-        while (relevant().length === 0) {
+        while (relevant().length === 0 && Board.isLive(member)) {
           const next = yield* PubSub.take(subscription);
           if (next !== swarm.id) continue;
         }

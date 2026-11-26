@@ -1276,3 +1276,245 @@ it.live(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("wakes a parked swarm_wait immediately when the waiting member is killed", () =>
+  withSwarmHarness(({ swarm, coordinatorId, workerId }) =>
+    Effect.gen(function* () {
+      const waitFiber = yield* Effect.forkChild(
+        swarm.wait(workerId, { timeoutSeconds: 45, mentionsOnly: true }),
+      );
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* swarm.kill(coordinatorId, "worker");
+
+      // Must resolve immediately on kill without advancing the 45s wait timer.
+      const waited = yield* Fiber.join(waitFiber);
+      assert.isFalse(waited.timedOut);
+      assert.strictEqual(waited.posts, "(nothing yet)");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "still notifies parked waiters and removes temp file when snapshot rename fails transiently",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const realFs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stateDir = yield* realFs.makeTempDirectoryScoped({ prefix: "agy-swarm-save-" });
+        const coordinatorId = ThreadId.make("thread:coordinator-save");
+        const shells = new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [coordinatorId, makeShell(coordinatorId, "completed")],
+        ]);
+        const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
+        const eventsSubscribed = yield* Deferred.make<void>();
+        let failNextRename = false;
+
+        const flakyFs: FileSystem.FileSystem = {
+          ...realFs,
+          rename: (oldPath, newPath) => {
+            if (failNextRename) {
+              failNextRename = false;
+              return Effect.fail(new Error("EPERM: transient antivirus lock") as never);
+            }
+            return realFs.rename(oldPath, newPath);
+          },
+        };
+
+        const threads = {
+          getThreadShell: (threadId: ThreadId) =>
+            Effect.succeed(shells.get(threadId) ?? makeShell(threadId, "completed")),
+          sendToThread: () => Effect.succeed({} as never),
+          dispatch: () => Effect.succeed({} as never),
+          streamDomainEvents: Stream.unwrap(
+            Effect.gen(function* () {
+              const subscription = yield* PubSub.subscribe(events);
+              yield* Deferred.succeed(eventsSubscribed, undefined);
+              return Stream.fromSubscription(subscription);
+            }),
+          ),
+        } as unknown as ThreadManagementService.ThreadManagementService["Service"];
+        const launches = {
+          launch: (input: { readonly threadId: ThreadId }) =>
+            Effect.sync(() => {
+              shells.set(input.threadId, makeShell(input.threadId, "running"));
+              return {} as never;
+            }),
+        } as unknown as ThreadLaunchService.ThreadLaunchService["Service"];
+        const providers = {
+          getProviders: Effect.succeed([]),
+        } as unknown as ProviderRegistry.ProviderRegistry["Service"];
+        const gitWorkflow = {
+          localStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasPrimaryRemote: false,
+              isDefaultRef: false,
+              refName: null,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            }),
+          repositoryRoot: () => Effect.succeed("/repo"),
+          createWorktree: () =>
+            Effect.succeed({ worktree: { path: "/repo-wt/tmp", refName: "swarm/tmp" } }),
+          removeWorktree: () => Effect.void,
+          deleteLocalBranch: () => Effect.void,
+        } as unknown as GitWorkflowService.GitWorkflowService["Service"];
+        const projects = {
+          getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" }),
+        } as unknown as ProjectService.ProjectService["Service"];
+
+        const layer = AgySwarm.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(FileSystem.FileSystem, flakyFs),
+              Layer.succeed(ServerConfig.ServerConfig, {
+                stateDir,
+              } as ServerConfig.ServerConfig["Service"]),
+              Layer.succeed(ThreadManagementService.ThreadManagementService, threads),
+              Layer.succeed(ThreadLaunchService.ThreadLaunchService, launches),
+              Layer.succeed(ProviderRegistry.ProviderRegistry, providers),
+              Layer.succeed(GitWorkflowService.GitWorkflowService, gitWorkflow),
+              Layer.succeed(ProjectService.ProjectService, projects),
+            ),
+          ),
+        );
+        const built = yield* Layer.build(layer);
+        const swarm = Context.get(built, AgySwarm.AgySwarm);
+        yield* Deferred.await(eventsSubscribed);
+        yield* swarm.add(coordinatorId, { name: "worker", brief: "listen" });
+        const snap = yield* swarm.snapshot(coordinatorId);
+        const workerId = snap!.members.find((m) => m.name === "worker")!.threadId;
+
+        const waitFiber = yield* Effect.forkChild(
+          swarm.wait(workerId, { timeoutSeconds: 45, mentionsOnly: true }),
+        );
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        failNextRename = true;
+        yield* swarm.post(coordinatorId, { text: "@worker wake despite disk error" });
+
+        const waited = yield* Fiber.join(waitFiber);
+        assert.isFalse(waited.timedOut);
+        assert.include(waited.posts, "wake despite disk error");
+
+        const files = yield* realFs.readDirectory(path.join(stateDir, "agy", "swarms"));
+        assert.isFalse(
+          files.some((file) => file.includes(".tmp")),
+          `expected no orphaned .tmp files, found: ${files.join(", ")}`,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("cleans up forked worktree and branch when delivering the initial brief fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "agy-swarm-fork-cleanup-" });
+      const coordinatorId = ThreadId.make("thread:coordinator-fork-cleanup");
+      const shells = new Map<ThreadId, OrchestrationV2ThreadShell>([
+        [coordinatorId, makeShell(coordinatorId, "completed")],
+      ]);
+      const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
+      const eventsSubscribed = yield* Deferred.make<void>();
+      const createdWorktrees: Array<string> = [];
+      const removedWorktrees: Array<string> = [];
+      const deletedBranches: Array<string> = [];
+
+      const threads = {
+        getThreadShell: (threadId: ThreadId) =>
+          Effect.succeed(shells.get(threadId) ?? makeShell(threadId, "completed")),
+        sendToThread: () =>
+          Effect.fail(new AgySwarm.AgySwarmError({ reason: "simulated brief delivery failure" })),
+        dispatch: () => Effect.succeed({} as never),
+        streamDomainEvents: Stream.unwrap(
+          Effect.gen(function* () {
+            const subscription = yield* PubSub.subscribe(events);
+            yield* Deferred.succeed(eventsSubscribed, undefined);
+            return Stream.fromSubscription(subscription);
+          }),
+        ),
+      } as unknown as ThreadManagementService.ThreadManagementService["Service"];
+      const launches = {
+        launch: () => Effect.succeed({} as never),
+        forkThread: (input: { readonly threadId: ThreadId }) =>
+          Effect.sync(() => {
+            const shell = makeShell(input.threadId, "completed");
+            shells.set(input.threadId, shell);
+            return {
+              threadId: input.threadId,
+              projection: { thread: shell },
+              resumed: false,
+            } as never;
+          }),
+      } as unknown as ThreadLaunchService.ThreadLaunchService["Service"];
+      const providers = {
+        getProviders: Effect.succeed([]),
+      } as unknown as ProviderRegistry.ProviderRegistry["Service"];
+      const gitWorkflow = {
+        localStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: false,
+            refName: null,
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+        repositoryRoot: () => Effect.succeed("/repo"),
+        createWorktree: (input: { readonly newRefName?: string | null }) =>
+          Effect.sync(() => {
+            const wtPath = `/repo-wt/${input.newRefName ?? "fork"}`;
+            createdWorktrees.push(wtPath);
+            return { worktree: { path: wtPath, refName: input.newRefName ?? "swarm/fork" } };
+          }),
+        removeWorktree: (input: { readonly path: string }) =>
+          Effect.sync(() => {
+            removedWorktrees.push(input.path);
+          }),
+        deleteLocalBranch: (input: { readonly refName: string }) =>
+          Effect.sync(() => {
+            deletedBranches.push(input.refName);
+          }),
+      } as unknown as GitWorkflowService.GitWorkflowService["Service"];
+      const projects = {
+        getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" }),
+      } as unknown as ProjectService.ProjectService["Service"];
+
+      const layer = AgySwarm.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(ServerConfig.ServerConfig, {
+              stateDir,
+            } as ServerConfig.ServerConfig["Service"]),
+            Layer.succeed(ThreadManagementService.ThreadManagementService, threads),
+            Layer.succeed(ThreadLaunchService.ThreadLaunchService, launches),
+            Layer.succeed(ProviderRegistry.ProviderRegistry, providers),
+            Layer.succeed(GitWorkflowService.GitWorkflowService, gitWorkflow),
+            Layer.succeed(ProjectService.ProjectService, projects),
+          ),
+        ),
+      );
+      const built = yield* Layer.build(layer);
+      const swarm = Context.get(built, AgySwarm.AgySwarm);
+      yield* Deferred.await(eventsSubscribed);
+
+      const err = yield* swarm
+        .add(coordinatorId, {
+          name: "forked-fail",
+          brief: "should fail on send",
+          fork: "coordinator",
+          workspace: "worktree",
+        })
+        .pipe(Effect.flip);
+      assert.include(err.reason, "simulated brief delivery failure");
+      assert.lengthOf(createdWorktrees, 1);
+      assert.deepStrictEqual(removedWorktrees, createdWorktrees);
+      assert.lengthOf(deletedBranches, 1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);

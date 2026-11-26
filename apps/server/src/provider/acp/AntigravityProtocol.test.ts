@@ -877,6 +877,30 @@ describe("Antigravity served reads", () => {
     );
     expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
 
+    const proxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_proxy",
+            title: "Run mcp_t3-code_t3_call",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {
+              tool: "send_to_user",
+              arguments: { message: "Hello", toolSummary: "Nested summary" },
+              toolSummary: "Outer summary",
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(proxiedT3Call.data.rawInput).toEqual({
+      tool: "send_to_user",
+      arguments: { message: "Hello" },
+    });
+
     const foreignCall = normalizeAntigravityToolCall(
       parseToolUpdate({
         sessionId: "session-1",

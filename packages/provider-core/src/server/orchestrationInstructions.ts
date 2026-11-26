@@ -1,4 +1,5 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { McpToolExposureMode } from "./mcpSession.ts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
@@ -59,6 +60,18 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 // its tools, so they need the terminal transport other harnesses never use.
 const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
 
+const T3_CODE_ACP_PROXY_TOOL_INSTRUCTIONS = `## T3 Code tool discovery (\`tool_search\` + \`t3_call\`)
+
+Core orchestration and swarm tools (\`orchestrator_capabilities\`, \`delegate_task\`, \`task_status\`, \`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`) are directly listed as MCP tools. All other T3 Code tools (\`preview_*\`, \`pull_request_*\`, \`ci_*\`, \`t3_thread_*\`, \`t3_project_*\`, \`t3_worktree_*\`, \`html_preview\`/\`html_render\`, \`schedule_task\`, \`device_*\`, \`request_secret\`, \`send_to_user\`, issues, themes, attachments, queues, environment links) are accessed through \`tool_search\` and \`t3_call\`:
+1. Call \`tool_search({ query })\` to find the tool and read its exact \`inputSchema\`.
+2. Invoke it immediately in the same turn with \`t3_call({ tool: "<name>", arguments: { ... } })\`.
+Never call unlisted T3 Code tool names directly and never fall back to shell MCP commands while \`tool_search\` and \`t3_call\` are available.`;
+
+const T3_CODE_PROXY_ORCHESTRATION_INSTRUCTIONS = T3_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
+  "\n- T3 tools may load late. Try the name once before you call it absent.",
+  "",
+);
+
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
 
 Prefer making reasonable assumptions and carrying out the user's request. Ask a concise question only when a missing user decision would materially change the result. Treat this mode as active until T3 Code supplies a different interaction-mode instruction.`;
@@ -71,6 +84,7 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  readonly mcpToolExposure?: McpToolExposureMode;
 }
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -84,20 +98,26 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
+    input.previousState.mcpToolExposure === input.state.mcpToolExposure
   ) {
     return input.prompt;
   }
+  const isProxy = input.state.mcpToolExposure === "proxy";
   const instructions = [
     input.state.interactionMode === "plan"
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
       ? [
+          ...(isProxy ? [T3_CODE_ACP_PROXY_TOOL_INSTRUCTIONS] : []),
           T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-          T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
-          T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
+          (isProxy
+            ? T3_CODE_PROXY_ORCHESTRATION_INSTRUCTIONS
+            : T3_CODE_ORCHESTRATION_INSTRUCTIONS
+          ).trim(),
+          ...(isProxy ? [] : [T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS]),
         ]
       : []),
   ];

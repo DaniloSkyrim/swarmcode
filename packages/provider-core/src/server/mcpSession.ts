@@ -2,9 +2,12 @@ import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contr
 import type * as Effect from "effect/Effect";
 
 /**
- * Sent by MCP clients that cannot defer tools themselves. The T3 MCP server then
- * lists only a core set plus `tool_search`, which lists the rest on demand.
+ * How the T3 MCP server exposes optional tools for clients that cannot defer them natively:
+ * - `deferred`: lists core tools + `tool_search`, expanding `tools/list` on demand via `list_changed`.
+ * - `proxy`: lists a fixed compact set of core tools + `tool_search` + `t3_call` so `tools/list` never grows.
  */
+export type McpToolExposureMode = "deferred" | "proxy";
+
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
 export interface McpProviderSessionConfig {

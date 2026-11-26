@@ -94,12 +94,12 @@ export interface T3McpToolDefinition {
   readonly displayName: string;
   readonly labels: readonly [action: string, running: string, completed: string, detail: string];
   readonly icon: "t3-code" | "browser" | "device" | "pull-request";
-  readonly summaryAction: T3McpToolSummaryAction;
+  readonly summaryAction: T3McpToolSummaryAction | null;
 }
 
 function tool(
   labels: T3McpToolDefinition["labels"],
-  summaryAction: T3McpToolSummaryAction,
+  summaryAction: T3McpToolSummaryAction | null,
   icon: T3McpToolDefinition["icon"] = "t3-code",
   displayName = `${labels[0]} ${labels[3]}`,
 ): T3McpToolDefinition {
@@ -441,6 +441,12 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
+  tool_search: tool(["Search", "Searching", "Searched", "T3 Code tools"], null),
+  t3_call: tool(["Call", "Calling", "Called", "a T3 Code tool"], null),
+  t3_swarm: tool(["Manage", "Managing", "Managed", "the swarm"], null),
+  post_message: tool(["Post", "Posting", "Posted", "to the swarm board"], null),
+  read_board: tool(["Read", "Reading", "Read", "the swarm board"], null),
+  swarm_wait: tool(["Wait", "Waiting", "Waited", "for the swarm board"], null),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
@@ -519,11 +525,36 @@ const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefin
     ],
 };
 
-/** Pass the call's input so an action tool resolves to the labels and summary of its action. */
+/** Unwraps a `t3_call({ tool, arguments })` proxy invocation into its inner T3 tool and arguments. */
+export function unwrapT3McpProxyCall(
+  toolName: string | null | undefined,
+  input?: unknown,
+): { readonly tool: string; readonly input: unknown } | null {
+  const name = toolName == null ? null : resolveT3McpToolName(toolName);
+  if (name !== "t3_call") return null;
+  const fields = asSummaryInput(input);
+  if (typeof fields?.tool !== "string") return null;
+  const inner = resolveT3McpToolName(fields.tool);
+  if (inner === null || inner === "t3_call" || !Object.hasOwn(T3_MCP_TOOLS, inner)) return null;
+  const rawArgs = fields.arguments;
+  let innerInput: unknown = rawArgs;
+  if (typeof rawArgs === "string") {
+    try {
+      innerInput = JSON.parse(rawArgs);
+    } catch {
+      innerInput = undefined;
+    }
+  }
+  return { tool: inner, input: innerInput };
+}
+
+/** Pass the call's input so an action or proxy tool resolves to the labels and summary of its target. */
 export function resolveT3McpToolDefinition(
   toolName: string | null | undefined,
   input?: unknown,
 ): T3McpToolDefinition | null {
+  const unwrapped = unwrapT3McpProxyCall(toolName, input);
+  if (unwrapped !== null) return resolveT3McpToolDefinition(unwrapped.tool, unwrapped.input);
   const name = toolName == null ? null : resolveT3McpToolName(toolName);
   if (name === null || !Object.hasOwn(T3_MCP_TOOLS, name)) return null;
   const action = asSummaryInput(input)?.action;
@@ -547,6 +578,8 @@ export function resolveT3McpSummaryAction(
   toolName: string | null | undefined,
   input: unknown,
 ): T3McpToolSummaryAction | null {
+  const unwrapped = unwrapT3McpProxyCall(toolName, input);
+  if (unwrapped !== null) return resolveT3McpSummaryAction(unwrapped.tool, unwrapped.input);
   const definition = resolveT3McpToolDefinition(toolName, input);
   if (definition === null) return null;
   const summarize = ACTION_SUMMARIES[resolveT3McpToolName(toolName!) ?? ""];

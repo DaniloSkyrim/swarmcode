@@ -40,7 +40,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
-import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpToolId, unwrapT3McpProxyCall } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
   compactT3McpToolOutput,
@@ -475,6 +475,8 @@ export interface AcpAdapterV2Flavor {
   readonly mcpOverHttp?: boolean;
   /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
   readonly deferMcpTools?: boolean;
+  /** Explicit MCP tool exposure mode (`deferred` or `proxy`); takes precedence over `deferMcpTools`. */
+  readonly mcpToolExposure?: McpProviderSession.McpToolExposureMode;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -1111,11 +1113,17 @@ const writeAcpMcpCallLauncher = Effect.fn("AcpAdapterV2.writeAcpMcpCallLauncher"
   );
 });
 
+function resolveFlavorMcpToolExposure(
+  flavor: Pick<AcpAdapterV2Flavor, "mcpToolExposure" | "deferMcpTools">,
+): McpProviderSession.McpToolExposureMode | undefined {
+  return flavor.mcpToolExposure ?? (flavor.deferMcpTools === true ? "deferred" : undefined);
+}
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
-  deferMcpTools: boolean | undefined,
+  mcpToolExposure: McpProviderSession.McpToolExposureMode | undefined,
   callLauncher: string | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
@@ -1132,6 +1140,9 @@ function acpMcpContext(
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+          ...(mcpToolExposure === undefined
+            ? []
+            : [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: mcpToolExposure }]),
         ],
       },
     ],
@@ -1145,9 +1156,11 @@ function acpMcpContext(
               url: session.endpoint,
               headers: [
                 { name: "Authorization", value: session.authorizationHeader },
-                ...(deferMcpTools === true
-                  ? [{ name: McpProviderSession.MCP_TOOL_EXPOSURE_HEADER, value: "deferred" }]
-                  : []),
+                ...(mcpToolExposure === undefined
+                  ? []
+                  : [
+                      { name: McpProviderSession.MCP_TOOL_EXPOSURE_HEADER, value: mcpToolExposure },
+                    ]),
               ],
             },
           ]
@@ -2113,16 +2126,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
   const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
+  const mcpToolExposure = resolveFlavorMcpToolExposure(flavor);
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(
-          acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
+          acpMcpContext(undefined, self, flavor.mcpOverHttp, mcpToolExposure, callLauncher),
         )
       : mcpSessions
           .read(threadId)
           .pipe(
             Effect.map((session) =>
-              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
+              acpMcpContext(session, self, flavor.mcpOverHttp, mcpToolExposure, callLauncher),
             ),
           );
   const driver = flavor.driver;
@@ -3799,6 +3813,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const startedAt = context.toolStartedAt.get(key) ?? now;
           context.toolStartedAt.set(key, startedAt);
           const ordinal = resolveSubagentChildOrdinal(subagent, key);
+          const subagentRawInput = unknownRecord(merged.data.rawInput);
+          const subagentProxyCall =
+            mcpIdentity === undefined
+              ? null
+              : (unwrapT3McpProxyCall(
+                  `${mcpIdentity.server}.${mcpIdentity.tool}`,
+                  mcpIdentity.input ?? subagentRawInput,
+                ) ??
+                unwrapT3McpProxyCall(
+                  `${mcpIdentity.server}.${mcpIdentity.tool}`,
+                  unknownRecord(subagentRawInput?.arguments),
+                ));
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver,
@@ -3822,7 +3848,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ? {}
                 : mcpToolPresentation({
                     serverName: mcpIdentity.server,
-                    toolName: mcpIdentity.tool,
+                    toolName: subagentProxyCall?.tool ?? mcpIdentity.tool,
                     source: unknownRecord(
                       (
                         unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
@@ -3833,8 +3859,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolName:
                 mcpIdentity === undefined
                   ? (merged.title ?? merged.kind ?? "Tool")
-                  : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-              input: merged.data.rawInput ?? null,
+                  : `${mcpIdentity.server}.${subagentProxyCall?.tool ?? mcpIdentity.tool}`,
+              input: subagentProxyCall
+                ? (unknownRecord(subagentProxyCall.input) ?? {})
+                : (merged.data.rawInput ?? null),
               output: merged.data.rawOutput ?? merged.data.content ?? null,
             },
           });
@@ -4958,9 +4986,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               );
             }
           } else if (mcpIdentity !== undefined) {
-            const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
-            const input =
-              mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
+            const rawToolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
+            const proxyCall =
+              unwrapT3McpProxyCall(rawToolName, mcpIdentity.input ?? rawInputRecord) ??
+              unwrapT3McpProxyCall(rawToolName, unknownRecord(rawInputRecord?.arguments));
+            const toolName = proxyCall ? `${mcpIdentity.server}.${proxyCall.tool}` : rawToolName;
+            const input = proxyCall
+              ? (unknownRecord(proxyCall.input) ?? {})
+              : (mcpIdentity.input ??
+                unknownRecord(rawInputRecord?.arguments) ??
+                rawInputRecord ??
+                {});
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
             const resolvedT3Tool = resolveT3McpToolId(toolName);
             const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
@@ -5102,7 +5138,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               title: null,
               ...mcpToolPresentation({
                 serverName: mcpIdentity.server,
-                toolName: mcpIdentity.tool,
+                toolName: proxyCall?.tool ?? mcpIdentity.tool,
                 source: unknownRecord(
                   (unknownRecord(rawOutputRecord?.result) ?? rawOutputRecord)?._meta,
                 )?.source,
@@ -9380,6 +9416,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
+            ...(mcpToolExposure === undefined ? {} : { mcpToolExposure }),
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined

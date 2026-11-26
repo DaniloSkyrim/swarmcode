@@ -58,6 +58,19 @@ it("advertises flat Antigravity-compatible JSON Schemas for all swarm tools", ()
   >;
   assert.strictEqual(waitProps.since?.type, "integer");
   assert.strictEqual(waitProps.timeout?.type, "integer");
+
+  const swarmPayloadBytes = Buffer.byteLength(
+    JSON.stringify({
+      name: SwarmToolkit.tools.t3_swarm.name,
+      description: SwarmToolkit.tools.t3_swarm.description,
+      inputSchema: advertisedJsonSchema(SwarmToolkit.tools.t3_swarm),
+    }),
+  );
+  assert.isBelow(
+    swarmPayloadBytes,
+    5_200,
+    `t3_swarm advertised payload grew to ${swarmPayloadBytes} bytes`,
+  );
 });
 
 it("decodes batch workers, workerTasks, and planTasks cleanly", () => {

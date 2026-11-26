@@ -80,6 +80,11 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
+  it("proxies optional T3 MCP tools over HTTP so agy keeps a fixed compact tool list", () => {
+    assert.isTrue(flavor.mcpOverHttp);
+    assert.equal(flavor.mcpToolExposure, "proxy");
+  });
+
   it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
     const batch = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",
@@ -1202,6 +1207,15 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     );
                     yield* updateTool("recording-stop", "completed");
 
+                    // t3_call proxy invocations unwrap to the inner tool for presentation and result recovery.
+                    yield* startTool("send-proxied", "t3_call", {
+                      tool: "send_to_user",
+                      arguments: { message: "Delivered via proxy" },
+                      toolSummary: "Send proxied message",
+                    });
+                    yield* recordSend("Delivered via proxy");
+                    yield* updateTool("send-proxied", "completed");
+
                     // Unfinished call projected at turn end must not claim or leak to Turn 2.
                     yield* startTool("send-unfinished", "send_to_user", {
                       message: unfinishedText,
@@ -1315,6 +1329,10 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           previewRecordingIdFromToolItem(tool("recording-stop")!),
           `${threadId}-rec-1`,
         );
+        const proxiedSend = tool("send-proxied");
+        assert.isDefined(proxiedSend);
+        assert.strictEqual(proxiedSend.toolName, "t3-code.send_to_user");
+        assert.strictEqual(sentMessageFromToolItem(proxiedSend), "Delivered via proxy");
       }).pipe(Effect.provide(layerSession)),
   );
 });
