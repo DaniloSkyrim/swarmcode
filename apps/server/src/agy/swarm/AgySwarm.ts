@@ -266,6 +266,16 @@ const STATE_EVENT_PREFIXES = [
   "thread.provider-switched",
 ];
 
+const metricsKey = (metrics: Board.StoredMemberMetrics) =>
+  [
+    metrics.turns,
+    metrics.inputTokens,
+    metrics.outputTokens,
+    metrics.cachedInputTokens,
+    metrics.reasoningTokens,
+    metrics.totalTokens,
+  ].join(":");
+
 /** Everything a snapshot shows, cheaply, so an unchanged swarm is never sent twice. */
 const fingerprint = (snapshot: AgySwarmSnapshot | null) =>
   snapshot === null
@@ -279,7 +289,7 @@ const fingerprint = (snapshot: AgySwarmSnapshot | null) =>
           .map((channel) => `${channel.name}:${channel.archived}:${channel.topic}`)
           .join(","),
         snapshot.plan === null ? "" : JSON.stringify(snapshot.plan),
-        snapshot.metrics ? `${snapshot.metrics.turns}:${snapshot.metrics.totalTokens}` : "",
+        snapshot.metrics ? metricsKey(snapshot.metrics) : "",
         snapshot.members
           .map((member) =>
             [
@@ -296,7 +306,7 @@ const fingerprint = (snapshot: AgySwarmSnapshot | null) =>
               member.killedAt,
               member.lastReadSeq,
               member.channels.join("+"),
-              member.metrics ? `${member.metrics.turns}:${member.metrics.totalTokens}` : "",
+              member.metrics ? metricsKey(member.metrics) : "",
             ].join("|"),
           )
           .join(","),
@@ -310,6 +320,8 @@ const MAX_ADD_BATCH = 16;
 const SPAWN_CONCURRENCY = 4;
 const WAKE_MAX_POSTS = 20;
 const WAKE_MAX_CHARS = 6_000;
+const READ_MAX_CHARS = 24_000;
+const LONG_POST_CHARS = 1_500;
 const MAX_ALERTED_FAILED_RUNS = 500;
 const MAX_RECORDED_METRIC_KEYS = 2_000;
 const LOAD_POSTS_DEFAULT_LIMIT = 100;
@@ -1671,14 +1683,22 @@ const make = Effect.gen(function* () {
           now: yield* nowIso,
         });
         const hidden = Board.hiddenMentionedMembers(swarm, created);
+        const notes = [
+          ...(hidden.length === 0
+            ? []
+            : [
+                `Note: ${hidden.map((name) => `@${name}`).join(", ")} not in #${created.channel} and was not woken.`,
+              ]),
+          ...(input.text.length <= LONG_POST_CHARS
+            ? []
+            : [
+                `This post is ${input.text.length} characters and stays in every reader's context. Next time post a short summary: put long reports, logs and diffs in a file and post its path, and cite earlier posts by number instead of restating them.`,
+              ]),
+        ];
         return {
           seq: created.seq,
           mentions: created.mentions,
-          ...(hidden.length === 0
-            ? {}
-            : {
-                note: `Note: ${hidden.map((name) => `@${name}`).join(", ")} not in #${created.channel} and was not woken.`,
-              }),
+          ...(notes.length === 0 ? {} : { note: notes.join(" ") }),
         };
       }),
     );
@@ -1686,18 +1706,29 @@ const make = Effect.gen(function* () {
   const read: AgySwarmShape["read"] = (callerThreadId, input) =>
     withExistingSwarmLock(callerThreadId, ({ swarm, member }) =>
       Effect.gen(function* () {
-        const posts = Board.readPosts(swarm, member, {
+        const channel = input.channel?.replace(/^#/u, "");
+        const page = Board.readPosts(swarm, member, {
           since: input.since ?? member.lastReadSeq,
           limit: Math.min(Math.max(input.limit ?? 100, 1), 300),
-          channel: input.channel?.replace(/^#/u, ""),
+          channel,
         });
+        const posts = Board.takePostsWithinChars(page, READ_MAX_CHARS);
         const last = posts.at(-1)?.seq;
-        if (last !== undefined && last > member.lastReadSeq) {
+        // A channel filter or a forward `since` leaves unread posts behind; only a contiguous read of everything marks them read.
+        const readsEverything =
+          (channel === undefined || channel === "*") &&
+          (input.since === undefined || input.since <= member.lastReadSeq);
+        if (readsEverything && last !== undefined && last > member.lastReadSeq) {
           member.lastReadSeq = last;
           yield* save(swarm);
         }
+        const more =
+          last !== undefined && posts.length < page.length
+            ? `\n\n(More posts after #${last}, left out to keep this result small: read_board{since:${last}${channel === undefined ? "" : `, channel:"${channel}"`}})`
+            : "";
         return {
-          posts: posts.length === 0 ? "(no new posts)" : posts.map(Board.formatPost).join("\n"),
+          posts:
+            posts.length === 0 ? "(no new posts)" : posts.map(Board.formatPost).join("\n") + more,
           head: Board.head(swarm),
         };
       }),
@@ -1731,7 +1762,7 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.andThen(PubSub.publish(changed, swarm.id))),
     );
     // Stay parked until lastReadSeq is recorded under the lock so saveAndDeliver cannot ring in the gap.
-    const { posts, timedOut } = yield* Effect.gen(function* () {
+    const { posts, truncated, timedOut } = yield* Effect.gen(function* () {
       const found = yield* Effect.gen(function* () {
         while (relevant().length === 0 && Board.isLive(member)) {
           const next = yield* PubSub.take(subscription);
@@ -1739,7 +1770,8 @@ const make = Effect.gen(function* () {
         }
         return relevant();
       }).pipe(Effect.timeoutOption(timeout));
-      const matched = found._tag === "Some" ? found.value : [];
+      const all = found._tag === "Some" ? found.value : [];
+      const matched = Board.takePostsWithinChars(all, READ_MAX_CHARS);
       yield* withSwarmLock(
         swarm.id,
         Effect.gen(function* () {
@@ -1750,7 +1782,11 @@ const make = Effect.gen(function* () {
           }
         }),
       );
-      return { posts: matched, timedOut: found._tag === "None" };
+      return {
+        posts: matched,
+        truncated: matched.length < all.length,
+        timedOut: found._tag === "None",
+      };
     }).pipe(
       Effect.ensuring(
         withSwarmLock(
@@ -1767,8 +1803,13 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+    const last = posts.at(-1)?.seq;
+    const more =
+      truncated && last !== undefined
+        ? `\n\n(More posts after #${last}, left out to keep this result small: ${mentionsOnly ? `swarm_wait{since:${last}, timeout:1}` : `read_board{since:${last}}`})`
+        : "";
     return {
-      posts: posts.length === 0 ? "(nothing yet)" : posts.map(Board.formatPost).join("\n"),
+      posts: posts.length === 0 ? "(nothing yet)" : posts.map(Board.formatPost).join("\n") + more,
       head: Board.head(swarm),
       timedOut,
     };

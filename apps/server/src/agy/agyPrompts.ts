@@ -58,8 +58,12 @@ for something new mid-swarm, brief a worker right away.
    - Numbered pool: pass \`n\` (copies) or \`workerTasks\` (one slice each): that spawns
      \`<name>-1\`..\`<name>-k\` in parallel; \`@<name>\` addresses the whole group.
    Leave \`model\` off so workers run on your model, unless the user asked for another model
-   (pass \`reasoningEffort\` when a model supports effort levels; pass \`owns:[...]\` to declare
-   owned files/paths and get warned about overlaps on a shared workspace).
+   (pass \`owns:[...]\` to declare owned files/paths and get warned about overlaps on a
+   shared workspace). When the model supports effort levels, match effort to the job: pass
+   a low \`reasoningEffort\` for mechanical work (inventories, running tests, lint, file
+   checks), and keep the default or higher for design, complex edits, reviews and audits.
+   When several workers would follow the same untried approach, add one pilot first and
+   add the rest once its result holds: a change of plan then costs one worker, not all.
    The brief is public (posted on the board as \`@name <brief>\`) and is the worker's
    starting context: it has not seen this conversation. Keep briefs concise and
    outcome-focused: state the goal, what it owns, what it must not touch, key constraints,
@@ -107,6 +111,8 @@ Workers sleep until named. \`@name\` for one worker or a numbered group, \`@#cha
 channel, \`@all\` only for something genuinely everyone's. A post naming nobody may be read
 by nobody for a long time. A mention is a doorbell, never a CC: tell workers to mention only
 the peer who acts next, and \`@coordinator\` only for a final result, a blocker or a decision.
+Keep posts short, yours included: everyone who reads a post keeps it in context. Cite posts by
+number instead of restating them.
 
 ## Things that will bite
 - \`kill\` is permanent and removes a worker's own worktree (refusing uncommitted changes
@@ -145,6 +151,15 @@ You have delegated swarm management privileges: you may update the Overview plan
 </swarm_manager>`);
   }
   const extraBlock = extras.length > 0 ? `\n${extras.join("\n")}` : "";
+  const longOutputPlace = input.scratchDir
+    ? input.readOnly
+      ? " (your scratch directory)"
+      : " (your scratch directory, or the repo when they are deliverables)"
+    : "";
+  const longOutputLine =
+    input.readOnly && !input.scratchDir
+      ? ""
+      : ` Put long reports, logs\n  and diffs in a file${longOutputPlace} and post the summary with the path.`;
   return `<swarm_worker>
 You are \`${input.name}\`, a worker in the swarm "${input.swarmTitle}". You were added by
 \`${input.adder}\`. Members talk on one shared board through the T3 Code MCP tools
@@ -154,6 +169,7 @@ You are \`${input.name}\`, a worker in the swarm "${input.swarmTitle}". You were
 - Post on the board: \`post_message{text:"@<who acts next> ..."}\`. Mention only the
   peer who must act next. When your piece is finished, post
   \`@${input.adder} [done] <summary, evidence: tests run, files changed>\`.
+- Keep posts short, a few lines: every reader keeps them in context.${longOutputLine}
 - Refer to earlier posts by number (\`#12\`). Wakes include unread posts when caught up;
   read earlier history with \`read_board\` only if needed.
 - When you have nothing to do, end your turn: you sleep for free and wake when someone

@@ -354,3 +354,27 @@ it("grants swarm management rights only to coordinator and delegated managers", 
   orchestrator.canManage = true;
   assert.isTrue(Board.canManageSwarm(orchestrator));
 });
+
+it("a capped page keeps the oldest posts that fit, and at least one", () => {
+  const swarm = swarmWith(["a"]);
+  for (let minute = 1; minute <= 3; minute++) {
+    Board.appendPost(swarm, { from: "a", text: "x".repeat(100), now: at(minute) });
+  }
+  const oneLength = Board.formatPost(swarm.posts[0]!).length + 1;
+
+  const page = Board.takePostsWithinChars(swarm.posts, oneLength * 2);
+  assert.deepStrictEqual(
+    page.map((post) => post.seq),
+    [1, 2],
+  );
+
+  const tooSmall = Board.takePostsWithinChars(swarm.posts, 10);
+  assert.deepStrictEqual(
+    tooSmall.map((post) => post.seq),
+    [1],
+  );
+});
+
+it("a capped page of no posts is empty", () => {
+  assert.deepStrictEqual(Board.takePostsWithinChars([], 100), []);
+});

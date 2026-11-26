@@ -1,5 +1,5 @@
 // Pure swarm board model: membership, posts, mentions, who wakes, and stall detection.
-// Persistence and threads live in swarmStore.ts and swarmRuntime.ts.
+// Persistence, threads and wakes live in AgySwarm.ts.
 import type { AgySwarmKind, AgySwarmPlan, AgySwarmPostKind } from "@t3tools/contracts";
 
 export const COORDINATOR = "coordinator";
@@ -411,6 +411,25 @@ export function readPosts(
 export function formatPost(post: StoredPost): string {
   const channel = post.channel === MAIN_CHANNEL ? "" : ` #${post.channel}`;
   return `#${post.seq} ${post.from}${channel} (${post.createdAt}): ${post.text}`;
+}
+
+/**
+ * The oldest posts that fit in `maxChars` once formatted, always at least one, so a reader pages
+ * forward in board order. A tool result stays in the caller's context for every later model call.
+ */
+export function takePostsWithinChars(
+  posts: ReadonlyArray<StoredPost>,
+  maxChars: number,
+): StoredPost[] {
+  const taken: StoredPost[] = [];
+  let chars = 0;
+  for (const post of posts) {
+    const len = formatPost(post).length + 1;
+    if (taken.length > 0 && chars + len > maxChars) break;
+    taken.push(post);
+    chars += len;
+  }
+  return taken;
 }
 
 export interface MemberLiveState {

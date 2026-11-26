@@ -122,10 +122,23 @@ function SwarmMetricsSummary(props: { metrics: AgySwarmMetrics | undefined }) {
                   output: formatTokenCount(metrics.outputTokens),
                 })}
               </span>
-              {metrics.cachedInputTokens > 0 || metrics.reasoningTokens > 0 ? (
+              {metrics.cachedInputTokens > 0 && metrics.inputTokens > 0 ? (
                 <span>
-                  {gt("Cached: {cached} · Reasoning: {reasoning}", {
+                  {gt("Uncached input: {uncached} · Cached: {cached} ({percent}%)", {
+                    uncached: formatTokenCount(
+                      Math.max(0, metrics.inputTokens - metrics.cachedInputTokens),
+                    ),
                     cached: formatTokenCount(metrics.cachedInputTokens),
+                    percent: Math.min(
+                      100,
+                      Math.round((metrics.cachedInputTokens / metrics.inputTokens) * 100),
+                    ),
+                  })}
+                </span>
+              ) : null}
+              {metrics.reasoningTokens > 0 ? (
+                <span>
+                  {gt("Reasoning: {reasoning} (included in output)", {
                     reasoning: formatTokenCount(metrics.reasoningTokens),
                   })}
                 </span>

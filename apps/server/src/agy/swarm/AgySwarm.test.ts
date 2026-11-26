@@ -627,6 +627,74 @@ it.effect(
     ),
 );
 
+it.effect("read_board and swarm_wait page a large backlog; long posts get a note", () =>
+  withSwarmHarness(({ swarm, coordinatorId, workerId }) =>
+    Effect.gen(function* () {
+      const short = yield* swarm.post(workerId, { text: "short status" });
+      assert.isUndefined(short.note);
+      const atLimit = yield* swarm.post(workerId, { text: "y".repeat(1_500) });
+      assert.isUndefined(atLimit.note);
+
+      const huge = "x".repeat(4_000);
+      for (let index = 1; index <= 8; index++) {
+        const result = yield* swarm.post(workerId, { text: `log ${index} ${huge}` });
+        assert.include(result.note ?? "", "post a short summary");
+      }
+
+      const waited = yield* swarm.wait(coordinatorId, {
+        since: 0,
+        mentionsOnly: false,
+        timeoutSeconds: 1,
+      });
+      assert.include(waited.posts, "log 1 ");
+      assert.notInclude(waited.posts, "log 8 ");
+      assert.include(waited.posts, "More posts after #");
+
+      const first = yield* swarm.read(coordinatorId, { since: 0 });
+      assert.include(first.posts, "log 1 ");
+      assert.notInclude(first.posts, "log 8 ");
+      assert.include(first.posts, "More posts after #");
+
+      const rest = yield* swarm.read(coordinatorId, {});
+      assert.include(rest.posts, "log 6 ");
+      assert.notInclude(rest.posts, "log 5 ");
+      assert.include(rest.posts, "log 8 ");
+      assert.notInclude(rest.posts, "More posts after #");
+    }),
+  ),
+);
+
+it.effect("a truncated mentions-only swarm_wait points back to swarm_wait, not read_board", () =>
+  withSwarmHarness(({ swarm, coordinatorId, workerId }) =>
+    Effect.gen(function* () {
+      const huge = "x".repeat(4_000);
+      for (let index = 1; index <= 8; index++) {
+        yield* swarm.post(workerId, { text: `@coordinator m${index} ${huge}` });
+      }
+      const waited = yield* swarm.wait(coordinatorId, { since: 0, timeoutSeconds: 1 });
+      assert.include(waited.posts, "m1 ");
+      assert.include(waited.posts, "timeout:1}");
+      assert.notInclude(waited.posts, "read_board{since:");
+    }),
+  ),
+);
+
+it.effect("a channel-filtered or forward read leaves skipped posts unread", () =>
+  withSwarmHarness(({ swarm, coordinatorId, workerId }) =>
+    Effect.gen(function* () {
+      yield* swarm.channel(coordinatorId, { op: "create", channel: "backend" });
+      const skipped = yield* swarm.post(workerId, { text: "main update" });
+      yield* swarm.post(coordinatorId, { text: "backend note", channel: "backend" });
+
+      yield* swarm.read(coordinatorId, { channel: "backend" });
+      yield* swarm.read(coordinatorId, { since: skipped.seq });
+
+      const all = yield* swarm.read(coordinatorId, {});
+      assert.include(all.posts, "main update");
+    }),
+  ),
+);
+
 it.effect(
   "immediately alerts coordinator on worker failure even while another worker is busy",
   () =>
