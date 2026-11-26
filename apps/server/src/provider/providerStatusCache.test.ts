@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ANTIGRAVITY_ORCHESTRATOR_MODEL,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -206,6 +207,63 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         fallbackProvider: fallbackCodex,
       }),
       fallbackCodex,
+    );
+  });
+
+  it("normalizes legacy Antigravity orchestrator presets out of cached provider snapshots", () => {
+    const antigravityDriver = ProviderDriverKind.make("antigravity");
+    const cachedAntigravity = makeProvider(antigravityDriver, {
+      models: [
+        {
+          slug: "gemini-4-neon",
+          name: "Gemini 4 Neon",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gemini-4-carbon",
+          name: "Gemini 4 Carbon",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gemini-4-hydrogen",
+          name: "Gemini 4 Hydrogen",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gemini-pro-orchestrator-neon",
+          name: "Orchestrator (Neon)",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gemini-pro-orchestrator",
+          name: "Orchestrator (Carbon)",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gemini-pro-orchestrator-g1-pro",
+          name: "Orchestrator (Argon)",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackAntigravity = makeProvider(antigravityDriver, {
+      models: [],
+    });
+
+    const hydrated = hydrateCachedProvider({
+      cachedProvider: cachedAntigravity,
+      fallbackProvider: fallbackAntigravity,
+    });
+
+    assert.deepStrictEqual(
+      hydrated.models.map((model) => model.slug),
+      ["gemini-4-neon", "gemini-4-carbon", "gemini-4-hydrogen", ANTIGRAVITY_ORCHESTRATOR_MODEL],
     );
   });
 });

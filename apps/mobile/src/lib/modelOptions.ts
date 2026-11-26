@@ -14,10 +14,18 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
+  ANTIGRAVITY_ORCHESTRATOR_MODEL,
+  isAntigravityOrchestratorModel,
   isManagedDriverAllowed,
   isProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
+import {
+  formatAntigravityOrchestratorShortPair,
+  formatAntigravityOrchestratorTriggerLabel,
+  readAntigravityOrchestratorDefaultsFromModels,
+  resolveAntigravityOrchestratorPair,
+} from "@t3tools/client-runtime/antigravity-orchestrator";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -416,12 +424,25 @@ export function buildModelOptions(
       models.sort((a, b) => (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity));
     for (const model of models) {
       const key = `${provider.instanceId}:${model.slug}`;
-      const shortName = resolveModelShortName(model, provider.driver);
+      const isAgyOrchestrator =
+        provider.driver === "antigravity" && model.slug === ANTIGRAVITY_ORCHESTRATOR_MODEL;
+      const agyOrchestratorPair = isAgyOrchestrator
+        ? resolveAntigravityOrchestratorPair(
+            null,
+            readAntigravityOrchestratorDefaultsFromModels(provider.models),
+            provider.models,
+          )
+        : null;
+      const shortName = agyOrchestratorPair
+        ? formatAntigravityOrchestratorTriggerLabel(agyOrchestratorPair, m)
+        : resolveModelShortName(model, provider.driver);
       options.set(key, {
         key,
-        label: model.name,
+        label: isAgyOrchestrator ? m(msg("Orchestrator")) : model.name,
         ...(shortName ? { shortName } : {}),
-        subtitle: model.subProvider ?? "",
+        subtitle: agyOrchestratorPair
+          ? formatAntigravityOrchestratorShortPair(agyOrchestratorPair)
+          : (model.subProvider ?? ""),
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
@@ -462,8 +483,26 @@ export function buildModelOptions(
     const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);
     if (existing) {
+      const provider = config?.providers.find(
+        (candidate) => candidate.instanceId === fallbackModelSelection.instanceId,
+      );
+      const agyPair =
+        existing.providerDriver === "antigravity" &&
+        isAntigravityOrchestratorModel(fallbackModelSelection.model)
+          ? resolveAntigravityOrchestratorPair(
+              fallbackModelSelection,
+              readAntigravityOrchestratorDefaultsFromModels(provider?.models),
+              provider?.models,
+            )
+          : null;
       options.set(key, {
         ...existing,
+        ...(agyPair
+          ? {
+              shortName: formatAntigravityOrchestratorTriggerLabel(agyPair, m),
+              subtitle: formatAntigravityOrchestratorShortPair(agyPair),
+            }
+          : {}),
         selection:
           existing.providerDriver === "antigravity"
             ? fallbackModelSelection

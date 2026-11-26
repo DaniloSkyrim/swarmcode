@@ -7,6 +7,7 @@ import {
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
+  isAntigravityOrchestratorModel,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   latestProviderTurnForAttempt,
@@ -52,6 +53,10 @@ import {
   type ThreadStructureRuntime,
   type ThreadStructureTurnItem,
 } from "./models.ts";
+import {
+  formatAntigravityOrchestratorEffortSummary,
+  resolveAntigravityOrchestratorPair,
+} from "../antigravityOrchestrator.ts";
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 import { mFallback, msg } from "gt-i18n";
@@ -320,6 +325,14 @@ export function formatModelSelectionEffort(
   models: ReadonlyArray<ServerProviderModel> = [],
   reportedSelection?: ModelSelection | null,
 ): string | null {
+  if (isAntigravityOrchestratorModel(selection.model)) {
+    const pair = resolveAntigravityOrchestratorPair(
+      selection.options ? selection : (reportedSelection ?? selection),
+      undefined,
+      models,
+    );
+    return formatAntigravityOrchestratorEffortSummary(pair);
+  }
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
   const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);

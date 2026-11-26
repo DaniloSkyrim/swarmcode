@@ -39,6 +39,10 @@
       "types": "./src/agyComposerCommands.ts",
       "default": "./src/agyComposerCommands.ts"
     },
+    "./antigravity-orchestrator": {
+      "types": "./src/antigravityOrchestrator.ts",
+      "default": "./src/antigravityOrchestrator.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

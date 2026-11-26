@@ -381,6 +381,7 @@ export function useTraitsSelection({
         ),
       );
     },
+    replaceOptions: updateModelOptions,
   };
 }
 

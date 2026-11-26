@@ -7,6 +7,7 @@ import {
   type SecretReference,
   type ServerProvider,
   type ServerProviderUpdateState,
+  type ServerSettings as ServerSettingsType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -36,6 +37,11 @@ import * as ServerConfig from "../config.ts";
 import { refreshPathFromLoginShell, refreshWindowsPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
+import {
+  normalizeAntigravityCatalogModels,
+  readAntigravityOrchestratorSettingsFromConfig,
+} from "./AntigravityProvider.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -370,7 +376,11 @@ export const mergeProviderSnapshot = (
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
-  const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  const rawModels = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  const models =
+    nextProvider.driver === ProviderDriverKind.make("antigravity")
+      ? normalizeAntigravityCatalogModels(rawModels)
+      : rawModels;
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
   const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
     ? previousProvider.workspaceSnapshots
@@ -472,6 +482,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const serverSettingsOption = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
 
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
@@ -546,17 +557,37 @@ export const layer = Layer.effect(
       ),
     );
     const initialManifest = yield* manifestService.current;
+    const readCurrentSettings = Option.isSome(serverSettingsOption)
+      ? serverSettingsOption.value.getSettings.pipe(Effect.orElseSucceed(() => undefined))
+      : Effect.undefined;
+    const initialSettings = yield* readCurrentSettings;
     const classifyCompatibility = (
       provider: ServerProvider,
       manifest: ModelManifest.ModelManifestData,
-    ) =>
-      applyProviderCompatibility(
-        provider,
+      currentSettings: ServerSettingsType | undefined = undefined,
+    ) => {
+      const normalizedProvider =
+        provider.driver === ProviderDriverKind.make("antigravity")
+          ? {
+              ...provider,
+              models: normalizeAntigravityCatalogModels(
+                provider.models,
+                readAntigravityOrchestratorSettingsFromConfig(
+                  currentSettings?.providerInstances[provider.instanceId]?.config,
+                ),
+              ),
+            }
+          : provider;
+      return applyProviderCompatibility(
+        normalizedProvider,
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
+    };
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      bootProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
+      bootProviders.map((provider) =>
+        classifyCompatibility(provider, initialManifest, initialSettings),
+      ),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
@@ -622,6 +653,7 @@ export const layer = Layer.effect(
       },
     ) {
       const manifest = yield* manifestService.current;
+      const currentSettings = yield* readCurrentSettings;
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
         applyProviderUpdateState,
@@ -650,7 +682,7 @@ export const layer = Layer.effect(
 
           const providers = orderProviderSnapshots(
             [...mergedProviders.values()].map((provider) =>
-              classifyCompatibility(provider, manifest),
+              classifyCompatibility(provider, manifest, currentSettings),
             ),
           );
           const providersToPersist = providers.filter((provider) =>

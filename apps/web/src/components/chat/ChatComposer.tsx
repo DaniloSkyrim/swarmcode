@@ -513,7 +513,10 @@ export interface ChatComposerProps {
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: {
+      focusComposer?: boolean;
+      modelOptions?: ReadonlyArray<{ readonly id: string; readonly value: string | boolean }>;
+    },
   ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;

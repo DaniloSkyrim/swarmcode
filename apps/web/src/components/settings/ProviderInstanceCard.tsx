@@ -52,6 +52,7 @@ import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { disallowedProviderMessage, isManagedDriverAllowed } from "@t3tools/contracts";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { AntigravityOrchestratorSettingsSection } from "./AntigravityOrchestratorSettingsSection";
 import type {
   ProviderClientDefinition,
   ProviderEnvironmentField,
@@ -1468,6 +1469,16 @@ export function ProviderInstanceCard({
           provider={liveProvider}
           projects={acpProjects}
           readOnly={readOnly}
+        />
+      ) : null}
+
+      {instance.driver === "antigravity" ? (
+        <AntigravityOrchestratorSettingsSection
+          instanceId={instanceId}
+          config={instance.config}
+          liveModels={liveProvider?.models}
+          readOnly={readOnly}
+          onChange={updateConfig}
         />
       ) : null}
 

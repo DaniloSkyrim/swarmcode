@@ -1,3 +1,7 @@
+import {
+  AntigravityOrchestratorSettings,
+  DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS,
+} from "./antigravityOrchestrator.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -958,6 +962,10 @@ export const AntigravitySettings = makeProviderSettingsSchema(
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    orchestrator: AntigravityOrchestratorSettings.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },

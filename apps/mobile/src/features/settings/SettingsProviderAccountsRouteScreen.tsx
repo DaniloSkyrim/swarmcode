@@ -36,6 +36,7 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
+import { AntigravityOrchestratorMobileSection } from "./AntigravityOrchestratorMobileSection";
 import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
@@ -103,17 +104,27 @@ function EnvironmentProviders({
     environment.serverConfig.managedPolicy,
     CLAUDE_DRIVER,
   );
+  const antigravityWithoutAccount = providers.filter(
+    (provider) => provider.driver === "antigravity" && !canManageProvider(provider),
+  );
   return (
     <>
       {accounts.map((provider, index) => (
-        <ProviderAccount
-          key={provider.instanceId}
+        <View key={provider.instanceId}>
+          <ProviderAccount environment={environment} provider={provider} divider={index > 0} />
+          {provider.driver === "antigravity" ? (
+            <AntigravityOrchestratorMobileSection environment={environment} provider={provider} />
+          ) : null}
+        </View>
+      ))}
+      {antigravityWithoutAccount.map((provider) => (
+        <AntigravityOrchestratorMobileSection
+          key={`orchestrator:${provider.instanceId}`}
           environment={environment}
           provider={provider}
-          divider={index > 0}
         />
       ))}
-      {accounts.length === 0 ? (
+      {accounts.length === 0 && antigravityWithoutAccount.length === 0 ? (
         <Text className="p-4 text-foreground-muted">
           <T>Configure a provider with in-app sign-in in web or desktop Settings.</T>
         </Text>

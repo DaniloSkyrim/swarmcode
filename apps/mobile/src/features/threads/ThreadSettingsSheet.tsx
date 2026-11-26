@@ -6,18 +6,44 @@ import { T, useGT, useLocale, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { useSheetStackOptions } from "../layout/nested-stacks";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ANTIGRAVITY_ORCHESTRATOR_MODEL,
+  ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS,
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  isAntigravityOrchestratorExecutorModel,
+  isAntigravityOrchestratorModel,
+  isAntigravityOrchestratorPlannerModel,
+  isAntigravityThinkingLevel,
+} from "@t3tools/contracts";
+import {
+  antigravityOrchestratorShortName,
+  availableAntigravityOrchestratorExecutors,
+  availableAntigravityOrchestratorPlanners,
+  buildAntigravityOrchestratorSelection,
+  formatAntigravityOrchestratorShortPair,
+  formatAntigravityOrchestratorTriggerLabel,
+  getAntigravityExecutorGuide,
+  getAntigravityPlannerGuide,
+  readAntigravityOrchestratorDefaultsFromModels,
+  resolveAntigravityOrchestratorPair,
+  thinkingLevelsForAntigravityModel,
+  updateAntigravityOrchestratorSelection,
+} from "@t3tools/client-runtime/antigravity-orchestrator";
 import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
 } from "@t3tools/shared/serverSettings";
 import type {
+  AntigravityOrchestratorPlannerModel,
+  AntigravityOrchestratorSettings,
   EnvironmentId,
   ModelSelection,
   ProjectId,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
+  ServerProviderModel,
   ServerSettings,
   ThreadId,
 } from "@t3tools/contracts";
@@ -283,7 +309,18 @@ function SwitchRow(props: {
 
 type ThreadSettingsSubmenuPage =
   | { readonly kind: "descriptor"; readonly id: string }
-  | { readonly kind: "runtime" };
+  | { readonly kind: "runtime" }
+  | {
+      readonly kind: "antigravityOrchestratorPlanner";
+      readonly instanceId: ProviderInstanceId;
+      readonly optionKey: string;
+    }
+  | {
+      readonly kind: "antigravityOrchestratorExecutor";
+      readonly instanceId: ProviderInstanceId;
+      readonly optionKey: string;
+      readonly plannerModel: AntigravityOrchestratorPlannerModel;
+    };
 
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
@@ -337,6 +374,14 @@ type ThreadSettingsSessionValue = {
   readonly searchQuery: string;
   readonly showLegacy: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
+  readonly selectAntigravityOrchestratorPair: (
+    option: ModelOption,
+    pair: AntigravityOrchestratorSettings,
+  ) => void;
+  readonly getProviderModels: (
+    instanceId: ProviderInstanceId,
+  ) => ReadonlyArray<ServerProviderModel>;
+  readonly findModelOptionByKey: (key: string) => ModelOption | null;
   readonly commitPendingModel: () => boolean;
   readonly isApplied: (option: ModelOption) => boolean;
   readonly isDisplayed: (option: ModelOption) => boolean;
@@ -566,7 +611,83 @@ function ThreadSettingsSessionProvider(
     return true;
   };
 
+  const getProviderModels = (instanceId: ProviderInstanceId): ReadonlyArray<ServerProviderModel> =>
+    config?.providers.find((provider) => provider.instanceId === instanceId)?.models ?? [];
+
+  const findModelOptionByKey = (key: string): ModelOption | null =>
+    providerGroups.flatMap((group) => group.models).find((option) => option.key === key) ?? null;
+
+  const selectAntigravityOrchestratorPair = (
+    option: ModelOption,
+    pair: AntigravityOrchestratorSettings,
+  ) => {
+    void Haptics.selectionAsync();
+    const selection = buildAntigravityOrchestratorSelection(option.selection.instanceId, pair);
+    rememberModelOptions(
+      option.selection.instanceId,
+      option.selection.model,
+      selection.options ?? [],
+    );
+    setPendingPrompt(null);
+    setPendingModel({
+      ...option,
+      shortName: formatAntigravityOrchestratorTriggerLabel(pair, messages),
+      subtitle: formatAntigravityOrchestratorShortPair(pair),
+      selection,
+    });
+  };
+
   const applyOptionChange = (id: string, value: string | boolean) => {
+    const activeSelection = pendingModel?.selection ?? props.selectedModel;
+    if (
+      activeSelection &&
+      displayedModel?.providerDriver === "antigravity" &&
+      isAntigravityOrchestratorModel(activeSelection.model) &&
+      typeof value === "string"
+    ) {
+      const liveModels = getProviderModels(activeSelection.instanceId);
+      const defaults = readAntigravityOrchestratorDefaultsFromModels(liveModels);
+      const patch: Partial<AntigravityOrchestratorSettings> =
+        id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerModel &&
+        isAntigravityOrchestratorPlannerModel(value)
+          ? { plannerModel: value }
+          : id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorModel &&
+              isAntigravityOrchestratorExecutorModel(value)
+            ? { executorModel: value }
+            : id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerEffort &&
+                isAntigravityThinkingLevel(value)
+              ? { plannerEffort: value }
+              : id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorEffort &&
+                  isAntigravityThinkingLevel(value)
+                ? { executorEffort: value }
+                : {};
+      if (Object.keys(patch).length > 0) {
+        const updated = updateAntigravityOrchestratorSelection(
+          activeSelection,
+          patch,
+          defaults,
+          liveModels,
+        );
+        const nextOptions = updated.options ?? [];
+        const updatedPair = resolveAntigravityOrchestratorPair(updated, defaults, liveModels);
+        if (pendingModel) {
+          rememberModelOptions(
+            pendingModel.selection.instanceId,
+            pendingModel.selection.model,
+            nextOptions,
+          );
+          setPendingModel({
+            ...pendingModel,
+            shortName: formatAntigravityOrchestratorTriggerLabel(updatedPair, messages),
+            subtitle: formatAntigravityOrchestratorShortPair(updatedPair),
+            selection: updated,
+          });
+        } else {
+          props.onUpdateOptionSelections(nextOptions);
+        }
+        return;
+      }
+    }
     const descriptor = displayedDescriptors.find((entry) => entry.id === id);
     const change =
       descriptor?.type === "select" && typeof value === "string"
@@ -661,6 +782,9 @@ function ThreadSettingsSessionProvider(
     searchQuery,
     showLegacy: showLegacyToggle,
     applyOptionChange,
+    selectAntigravityOrchestratorPair,
+    getProviderModels,
+    findModelOptionByKey,
     commitPendingModel,
     isApplied,
     isDisplayed,
@@ -739,6 +863,11 @@ type ThreadSettingsCatalogItem =
       readonly option: ModelOption;
       readonly isFirst: boolean;
       readonly isLast: boolean;
+    }
+  | {
+      readonly kind: "antigravityOrchestrator";
+      readonly key: string;
+      readonly option: ModelOption;
     }
   | {
       readonly kind: "notice";
@@ -936,14 +1065,32 @@ function buildThreadSettingsCatalogItems(
       modelCount: visibleModels.length,
       models: collapsed ? [] : visibleModels,
     };
+    const agyOrchestratorOption =
+      !collapsed && driver === "antigravity"
+        ? (provider.models.find(
+            (option) => option.selection.model === ANTIGRAVITY_ORCHESTRATOR_MODEL,
+          ) ?? null)
+        : null;
+    const regularModels = agyOrchestratorOption
+      ? provider.models.filter((option) => option.key !== agyOrchestratorOption.key)
+      : provider.models;
     return [
       {
         kind: "provider" as const,
         key: `provider:${group.providerKey}`,
         provider,
       },
-      ...((collapsed ? null : subProviderCatalogItems(session, group, provider.models)) ??
-        modelItems(provider.models)),
+      ...((collapsed ? null : subProviderCatalogItems(session, group, regularModels)) ??
+        modelItems(regularModels)),
+      ...(agyOrchestratorOption
+        ? [
+            {
+              kind: "antigravityOrchestrator" as const,
+              key: `antigravity-orchestrator:${agyOrchestratorOption.key}`,
+              option: agyOrchestratorOption,
+            },
+          ]
+        : []),
       ...(!collapsed && updateRequiredNotice
         ? [
             {
@@ -1135,6 +1282,72 @@ function ThreadSettingsMainContent(props: {
           option={item.option}
         />
       );
+    } else if (item.kind === "antigravityOrchestrator") {
+      const liveModels = session.getProviderModels(item.option.selection.instanceId);
+      const defaults = readAntigravityOrchestratorDefaultsFromModels(liveModels);
+      const isSelected = session.isDisplayed(item.option);
+      const activePair = isSelected
+        ? resolveAntigravityOrchestratorPair(session.displayedModelSelection, defaults, liveModels)
+        : defaults;
+      content = (
+        <View className="mx-4 mt-2.5 overflow-hidden rounded-2xl bg-grouped-card">
+          <View className="flex-row items-center gap-2 px-4 py-3">
+            <Pressable
+              accessibilityRole="button"
+              className="min-w-0 flex-1 flex-row items-center gap-2.5"
+              onPress={() =>
+                props.onOpenSubmenu({
+                  kind: "antigravityOrchestratorPlanner",
+                  instanceId: item.option.selection.instanceId,
+                  optionKey: item.option.key,
+                })
+              }
+            >
+              <View className="min-w-0 flex-1 gap-0.5">
+                <View className="flex-row items-center gap-1.5">
+                  <Text
+                    textRole="body"
+                    className="font-t3-medium text-foreground"
+                    numberOfLines={1}
+                  >
+                    {gt("Orchestrator")}
+                  </Text>
+                  {isSelected ? (
+                    <SymbolView
+                      name="checkmark"
+                      size={14}
+                      tintColorClassName="accent-icon"
+                      type="monochrome"
+                      weight="semibold"
+                    />
+                  ) : null}
+                </View>
+                <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
+                  {formatAntigravityOrchestratorShortPair(activePair)}
+                </Text>
+              </View>
+              <SymbolView
+                name="chevron.right"
+                size={13}
+                tintColorClassName="accent-icon-muted"
+                type="monochrome"
+              />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={gt("Use default ({pair})", {
+                pair: formatAntigravityOrchestratorShortPair(defaults),
+              })}
+              className="rounded-full border border-border-subtle px-2.5 py-1 active:opacity-70"
+              onPress={() => session.selectAntigravityOrchestratorPair(item.option, defaults)}
+            >
+              <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
+                {gt("Default", { $context: "quick action to use default orchestrator models" })}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      );
     } else if (item.kind === "notice") {
       content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
     } else if (item.kind === "empty") {
@@ -1206,6 +1419,8 @@ function ThreadSettingsMainContent(props: {
 function ThreadSettingsChoiceContent(props: {
   readonly submenu: ThreadSettingsSubmenuPage;
   readonly onSelected: () => void;
+  readonly onOpenSubmenu?: (submenu: ThreadSettingsSubmenuPage) => void;
+  readonly onFinishOrchestrator?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const gt = useGT();
@@ -1213,12 +1428,200 @@ function ThreadSettingsChoiceContent(props: {
   const session = useThreadSettingsSession();
   const descriptorId = props.submenu.kind === "descriptor" ? props.submenu.id : null;
 
+  if (props.submenu.kind === "antigravityOrchestratorPlanner") {
+    const { instanceId, optionKey } = props.submenu;
+    const liveModels = session.getProviderModels(instanceId);
+    const defaults = readAntigravityOrchestratorDefaultsFromModels(liveModels);
+    const currentPair = resolveAntigravityOrchestratorPair(
+      session.displayedModelSelection,
+      defaults,
+      liveModels,
+    );
+    const planners = availableAntigravityOrchestratorPlanners(liveModels);
+    return (
+      <ScrollView
+        className="flex-1 bg-sheet"
+        style={READABLE_WIDTH_STYLE}
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 16,
+          paddingHorizontal: 16,
+          paddingTop: 12,
+          gap: 12,
+        }}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text textRole="footnote" className="px-1 text-foreground-muted">
+          {gt(
+            "Step 1 of 2 · Plans the work, makes architectural decisions, and reviews the final result.",
+          )}
+        </Text>
+        <View className="gap-3">
+          {planners.map((slug) => {
+            const guide = getAntigravityPlannerGuide(slug, m, liveModels);
+            const isCurrent = currentPair.plannerModel === slug;
+            return (
+              <Pressable
+                key={slug}
+                accessibilityRole="button"
+                className={cn(
+                  "rounded-2xl bg-grouped-card p-4 gap-2 border",
+                  isCurrent ? "border-foreground/30" : "border-border-subtle",
+                )}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  props.onOpenSubmenu?.({
+                    kind: "antigravityOrchestratorExecutor",
+                    instanceId,
+                    optionKey,
+                    plannerModel: slug,
+                  });
+                }}
+              >
+                <View className="flex-row items-center justify-between gap-2">
+                  <Text textRole="body" className="font-t3-semibold text-foreground">
+                    {gt("Orchestrator ({model})", {
+                      model: antigravityOrchestratorShortName(slug),
+                    })}
+                  </Text>
+                  {guide.badge ? (
+                    <Text textRole="footnote" className="text-foreground-muted">
+                      {guide.badge}
+                    </Text>
+                  ) : null}
+                </View>
+                {guide.pros.map((pro) => (
+                  <Text key={pro} textRole="footnote" className="text-foreground-muted">
+                    {`• ${pro}`}
+                  </Text>
+                ))}
+                <Text textRole="footnote" className="text-foreground">
+                  {gt("Ideal for: {detail}", { detail: guide.idealFor })}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  if (props.submenu.kind === "antigravityOrchestratorExecutor") {
+    const { instanceId, optionKey, plannerModel } = props.submenu;
+    const liveModels = session.getProviderModels(instanceId);
+    const defaults = readAntigravityOrchestratorDefaultsFromModels(liveModels);
+    const currentPair = resolveAntigravityOrchestratorPair(
+      session.displayedModelSelection,
+      defaults,
+      liveModels,
+    );
+    const executors = availableAntigravityOrchestratorExecutors(liveModels);
+    const option = session.findModelOptionByKey(optionKey);
+    return (
+      <ScrollView
+        className="flex-1 bg-sheet"
+        style={READABLE_WIDTH_STYLE}
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 16,
+          paddingHorizontal: 16,
+          paddingTop: 12,
+          gap: 12,
+        }}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text textRole="footnote" className="px-1 text-foreground-muted">
+          {gt("Step 2 of 2 · Orchestrator: {planner}. Carries out searches, edits, and tests.", {
+            planner: antigravityOrchestratorShortName(plannerModel),
+          })}
+        </Text>
+        <View className="gap-3">
+          {executors.map((slug) => {
+            const guide = getAntigravityExecutorGuide(slug, m, liveModels);
+            const isCurrent = currentPair.executorModel === slug;
+            return (
+              <Pressable
+                key={slug}
+                accessibilityRole="button"
+                className={cn(
+                  "rounded-2xl bg-grouped-card p-4 gap-2 border",
+                  isCurrent ? "border-foreground/30" : "border-border-subtle",
+                )}
+                onPress={() => {
+                  if (option) {
+                    const nextPair = resolveAntigravityOrchestratorPair(
+                      buildAntigravityOrchestratorSelection(instanceId, {
+                        plannerModel,
+                        plannerEffort: currentPair.plannerEffort,
+                        executorModel: slug,
+                        executorEffort: currentPair.executorEffort,
+                      }),
+                      defaults,
+                      liveModels,
+                    );
+                    session.selectAntigravityOrchestratorPair(option, nextPair);
+                  }
+                  props.onFinishOrchestrator?.();
+                }}
+              >
+                <View className="flex-row items-center justify-between gap-2">
+                  <Text textRole="body" className="font-t3-semibold text-foreground">
+                    {guide.name}
+                  </Text>
+                  {guide.badge ? (
+                    <Text textRole="footnote" className="text-foreground-muted">
+                      {guide.badge}
+                    </Text>
+                  ) : null}
+                </View>
+                {guide.pros.map((pro) => (
+                  <Text key={pro} textRole="footnote" className="text-foreground-muted">
+                    {`• ${pro}`}
+                  </Text>
+                ))}
+                <Text textRole="footnote" className="text-foreground">
+                  {gt("Ideal as executor for: {detail}", { detail: guide.idealFor })}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+    );
+  }
+
   const activeDescriptor =
     descriptorId !== null
       ? session.displayedDescriptors.find(
           (descriptor) => descriptor.type === "select" && descriptor.id === descriptorId,
         )
       : undefined;
+
+  const filteredDescriptorChoices = (() => {
+    if (activeDescriptor?.type !== "select") return [];
+    const base = selectableChoices(activeDescriptor);
+    const activeSelection = session.displayedModelSelection;
+    if (
+      activeSelection &&
+      isAntigravityOrchestratorModel(activeSelection.model) &&
+      (activeDescriptor.id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerEffort ||
+        activeDescriptor.id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorEffort)
+    ) {
+      const liveModels = session.getProviderModels(activeSelection.instanceId);
+      const pair = resolveAntigravityOrchestratorPair(
+        activeSelection,
+        readAntigravityOrchestratorDefaultsFromModels(liveModels),
+        liveModels,
+      );
+      const targetModel =
+        activeDescriptor.id === ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerEffort
+          ? pair.plannerModel
+          : pair.executorModel;
+      const allowed = new Set<string>(thinkingLevelsForAntigravityModel(targetModel, liveModels));
+      return base.filter((choice) => allowed.has(choice.id));
+    }
+    return base;
+  })();
 
   const submenuContent =
     props.submenu.kind === "runtime"
@@ -1238,7 +1641,7 @@ function ThreadSettingsChoiceContent(props: {
         }
       : activeDescriptor?.type === "select"
         ? {
-            rows: selectableChoices(activeDescriptor).map((choice) => ({
+            rows: filteredDescriptorChoices.map((choice) => ({
               id: choice.id,
               label: choice.label,
               description: choice.description,
@@ -1424,9 +1827,14 @@ function ThreadSettingsModelsScreen() {
             const title =
               submenu.kind === "runtime"
                 ? gt("Runtime", { $context: "agent permission mode setting" })
-                : (session.displayedDescriptors.find(
-                    (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
-                  )?.label ?? gt("Option"));
+                : submenu.kind === "antigravityOrchestratorPlanner"
+                  ? gt("Choose Orchestrator")
+                  : submenu.kind === "antigravityOrchestratorExecutor"
+                    ? gt("Choose Executor")
+                    : (session.displayedDescriptors.find(
+                        (descriptor) =>
+                          descriptor.type === "select" && descriptor.id === submenu.id,
+                      )?.label ?? gt("Option"));
             navigation.navigate("ThreadSettingsChoice", { ...submenu, title });
           }}
         />
@@ -1436,6 +1844,7 @@ function ThreadSettingsModelsScreen() {
 }
 
 function ThreadSettingsChoiceScreen() {
+  const gt = useGT();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const route = useRoute<RouteProp<ThreadSettingsPickerStackParams, "ThreadSettingsChoice">>();
 
@@ -1446,6 +1855,14 @@ function ThreadSettingsChoiceScreen() {
         <ThreadSettingsChoiceContent
           submenu={route.params}
           onSelected={() => navigation.goBack()}
+          onOpenSubmenu={(submenu) => {
+            const title =
+              submenu.kind === "antigravityOrchestratorExecutor"
+                ? gt("Choose Executor")
+                : gt("Choose Orchestrator");
+            navigation.push("ThreadSettingsChoice", { ...submenu, title });
+          }}
+          onFinishOrchestrator={() => navigation.popTo("ThreadSettingsModels")}
         />
       </ScreenContent>
     </>

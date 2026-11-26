@@ -1,7 +1,12 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  ANTIGRAVITY_ORCHESTRATOR_MODEL,
+  ANTIGRAVITY_ORCHESTRATOR_OWNED_OPTION_IDS,
+  isAntigravityLegacyOrchestratorModel,
+  isAntigravityOrchestratorModel,
   ProviderDriverKind,
   ProviderInstanceId,
+  type AntigravityOrchestratorSettings,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
@@ -56,6 +61,12 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import {
+  applyAntigravityModelAndEffort,
+  resolveAntigravityOrchestratorRuntimePair,
+  wrapAntigravityOrchestratorRuntime,
+  type AntigravityOrchestratorController,
+} from "../../provider/acp/AntigravityOrchestratorRuntime.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
@@ -112,6 +123,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly orchestratorDefaults?: AntigravityOrchestratorSettings;
 }
 
 /**
@@ -155,6 +167,10 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
+  const orchestratorControllers = new WeakMap<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    AntigravityOrchestratorController
+  >();
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -178,7 +194,7 @@ export function makeAntigravityAcpAdapterFlavor(
       // Served reads are reported from the read handler, so they take turns with agent updates.
       const updates = yield* Semaphore.make(1);
       let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
-      return {
+      const baseRuntime = {
         ...runtime,
         handleReadTextFile: (handler) =>
           runtime.handleReadTextFile((request, context) =>
@@ -222,6 +238,11 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
       } satisfies typeof runtime;
+      const orchestrated = wrapAntigravityOrchestratorRuntime(baseRuntime, {
+        initialPlanOnly: input.runtimePolicy.interactionMode === "plan",
+      });
+      orchestratorControllers.set(orchestrated.runtime, orchestrated.controller);
+      return orchestrated.runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
     Effect.mapError((cause): EffectAcpErrors.AcpError =>
@@ -272,10 +293,31 @@ export function makeAntigravityAcpAdapterFlavor(
     // `agy acp` reads a prompt sent mid-turn as a steer; cancel-and-restart killed its subagents.
     steersWithPrompt: antigravitySteersWithPrompt,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
+    ownedModelOptionIds: [...ANTIGRAVITY_ORCHESTRATOR_OWNED_OPTION_IDS],
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
       modelSelection,
     }) {
+      const controller = orchestratorControllers.get(runtime);
+      if (
+        isAntigravityOrchestratorModel(modelSelection.model) ||
+        isAntigravityLegacyOrchestratorModel(modelSelection.model)
+      ) {
+        const configOptions = yield* runtime.getConfigOptions;
+        const pair = yield* resolveAntigravityOrchestratorRuntimePair({
+          configOptions,
+          modelSelection,
+          ...(options.orchestratorDefaults ? { defaults: options.orchestratorDefaults } : {}),
+        });
+        controller?.setPair(pair);
+        yield* applyAntigravityModelAndEffort({
+          runtime,
+          model: pair.plannerModel,
+          effort: pair.plannerEffort,
+        });
+        return ANTIGRAVITY_ORCHESTRATOR_MODEL;
+      }
+      controller?.setPair(null);
       const defaultModel = yield* options.defaultModel;
       return yield* applyAntigravityAcpModelSelection({
         runtime,

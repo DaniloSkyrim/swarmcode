@@ -3379,6 +3379,13 @@
   "f2a955905704b91d": "{hours} h {minutes} min",
   "3609f564a63c8eca": "{minutes} min",
   "9251bb742f60720d": "{hours} h",
+  "711418474e1a59b0": "Choose Orchestrator",
+  "ca6964b715a84a79": "Choose Executor",
+  "a881c6ce0c770dcc": "Plans the work, makes architectural decisions, and reviews edits.",
+  "237fa7149e901cba": "Carries out the plan: searches files, applies edits, and runs tests.",
+  "9f166882ef7880e7": "Orchestrator ({model})",
+  "35b466e220ac1764": "Ideal for:",
+  "f3d35db904311773": "Ideal as executor for:",
   "a1e982c6047c0860": "Gå till citerat svar: {label}",
   "c156140c3f5ebb75": "Gå till svaret som detta besvarar: {label}",
   "f8031a49c6e9fe25": "Visa citerad assistenttext: {label}",
@@ -3626,11 +3633,16 @@
   "2bb448d605877a22": "Redigera eller tryck Esc för att avbryta",
   "1a1f128d70c62304": "{count, plural, one {Skickas när bilden är klar} other {Skickas när {count} bilder är klara}}",
   "5af3ab719a9725fb": "Skickar meddelande",
+  "c42ec17e1c560e2e": "Orchestrator {plannerEffort} · Executor {executorEffort}",
   "461c9f865f2e9b92": "{option} på",
   "f2aa17b5c620f2a4": "{option} av",
   "f59314a884aae1ff": "Standard",
   "57d2ef7f9e3de4e1": "På",
   "335ddcec2aaeee34": "Av",
+  "4deb17607a449ab9": "Orchestrator thinking level",
+  "730f738d4c7ccdb2": "Executor thinking level",
+  "d20177160460cc0c": "Executor",
+  "bfb215c3b421a23e": "Thinking Level",
   "8fdc1770be94d8d4": "Alternativ",
   "ac2b8be618fffb13": "Ansträngning",
   "0c06344ab668ef45": "Snabb",
@@ -4062,6 +4074,8 @@
   "aaae02e050a73bc2": "Inga favoriter än",
   "656e11e9444ed41e": "Söker projektmodeller...",
   "4a1b2d720142a885": "Inga modeller hittades",
+  "09eb32dcd2ed2a9c": "Use default ({pair})",
+  "d8c4abfacfd3d8d1": "Default",
   "1b4fa45dbaca4b1d": "Leverantörsinställningar",
   "b16ecc66f9dc0600": "{label}: Inaktiverad i inställningarna.",
   "a2a2f2c9350c53c9": "{label}: Inte tillgänglig. {message}",
@@ -7667,6 +7681,12 @@
   "b35256ca61016104": "Lägg till källa",
   "52814dd6f7d0a15c": "Lägg till hubb",
   "27b770d3402abfa2": "Avancerat",
+  "f17ae65eab9da1e0": "Orchestrator Settings",
+  "f90352ddd76a9775": "Orchestrator Model",
+  "db7270fbf74dd776": "Plans the work, makes design decisions, and reviews the result. Pick a top-tier model. You can also pick one per conversation from the Orchestrator row in the model menu.",
+  "30e69715b48268fe": "Executor Model",
+  "1f8ddc4c199c967c": "Carries out the plan: searches, edits, builds, and tests. Pick a faster, cheaper model.",
+  "3c2433b8d07c0cde": "Choose the models Orchestrator uses. A larger, smarter orchestrator model with a faster, cheaper executor gives high quality for fewer tokens.",
   "584595dfcadab699": "Grafik",
   "7df1a31c9019f5ff": "Nightly-grafik",
   "2f265d02c8753150": "Dev-grafik",
@@ -12522,16 +12542,18 @@
       "v": "v"
     }
   ],
-  "e103b6af05979d1f": [
-    "Challenger: ",
+  "25d33057e7986118": [
+    "Challenger:",
+    " ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     }
   ],
-  "b93eacd49e833319": [
-    "Auditor: ",
+  "f5acbc15f2c71816": [
+    "Auditor:",
+    " ",
     {
       "i": 1,
       "k": "_gt_value_1",

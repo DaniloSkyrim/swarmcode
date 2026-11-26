@@ -1,12 +1,19 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  ANTIGRAVITY_ORCHESTRATOR_MODEL,
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
+  type ProviderOptionSelection,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import {
+  formatAntigravityOrchestratorTriggerLabel,
+  readAntigravityOrchestratorDefaultsFromModels,
+  resolveAntigravityOrchestratorPair,
+} from "@t3tools/client-runtime/antigravity-orchestrator";
 import { RegistryContext } from "@effect/atom-react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import {
   createContext,
   memo,
@@ -93,6 +100,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   workspaceCwd?: string | null;
   activeInstanceId: ProviderInstanceId;
   model: string;
+  activeModelOptions?: ReadonlyArray<ProviderOptionSelection> | null;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   lockedProvider: ProviderDriverKind | null;
@@ -115,7 +123,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
-  onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  onInstanceModelChange: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    modelOptions?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
   /** Shown after the model name inside the same trigger, such as the effort level. */
   triggerSuffix?: ReactNode;
   /** Names the suffix for the tooltip and screen readers. */
@@ -149,6 +161,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     if (isMenuOpen) refreshModelCatalog();
   }, [isMenuOpen]);
   const gt = useGT();
+  const messages = useMessages();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -172,16 +185,37 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
-  const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
-    : props.model === ANTIGRAVITY_DEFAULT_MODEL
-      ? gt("Choose model")
-      : props.model || gt("Choose model");
+  const orchestratorTriggerLabel =
+    activeEntry?.driverKind === "antigravity" &&
+    selectedModel?.slug === ANTIGRAVITY_ORCHESTRATOR_MODEL
+      ? formatAntigravityOrchestratorTriggerLabel(
+          resolveAntigravityOrchestratorPair(
+            {
+              instanceId: activeInstanceId,
+              model: props.model,
+              ...(props.activeModelOptions ? { options: props.activeModelOptions } : {}),
+            },
+            readAntigravityOrchestratorDefaultsFromModels(activeEntry.models),
+            activeEntry.models,
+          ),
+          messages,
+        )
+      : null;
+  const triggerTitle =
+    orchestratorTriggerLabel ??
+    (selectedModel
+      ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
+      : props.model === ANTIGRAVITY_DEFAULT_MODEL
+        ? gt("Choose model")
+        : props.model || gt("Choose model"));
   const withUnavailable = (model: string, isUnavailable: boolean | undefined) =>
     isUnavailable ? gt("{model} (Unavailable)", { model }) : model;
-  const triggerLabel = selectedModel
-    ? withUnavailable(getDisplayModelName(selectedModel), selectedModel.isUnavailable)
-    : triggerTitle;
+  const triggerLabel =
+    orchestratorTriggerLabel !== null
+      ? withUnavailable(orchestratorTriggerLabel, selectedModel?.isUnavailable)
+      : selectedModel
+        ? withUnavailable(getDisplayModelName(selectedModel), selectedModel.isUnavailable)
+        : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -222,9 +256,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ?.click();
   };
 
-  const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
+  const handleInstanceModelChange = (
+    instanceId: ProviderInstanceId,
+    model: string,
+    modelOptions?: ReadonlyArray<ProviderOptionSelection>,
+  ) => {
     if (props.disabled) return;
-    props.onInstanceModelChange(instanceId, model);
+    props.onInstanceModelChange(instanceId, model, modelOptions);
     if (!docked) {
       setIsMenuOpen(false);
       return;
@@ -297,6 +335,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       workspaceCwd={props.workspaceCwd ?? null}
       activeInstanceId={activeInstanceId}
       model={props.model}
+      {...(props.activeModelOptions !== undefined
+        ? { activeModelOptions: props.activeModelOptions }
+        : {})}
       {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
       {...(props.onToggleModel
         ? {
@@ -476,11 +517,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <div className="flex max-h-(--available-height) flex-col">
               {/* One fixed height, so a model with more options never resizes the popup. Short
                   windows shrink it and keep the footer. */}
-              <div className="flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
+              <div className="group/picker-body flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
                 {picker}
                 <div
                   data-model-picker-effort
-                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 group-has-[[data-antigravity-orchestrator-flow]]/picker-body:hidden max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
                   onKeyDown={(event) => {
                     if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
                       return;

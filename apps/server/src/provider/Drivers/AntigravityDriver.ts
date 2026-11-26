@@ -1,6 +1,7 @@
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   AntigravitySettings,
+  isAntigravityLegacyOrchestratorModel,
   ProviderDriverKind,
   ProviderSetupError,
   RuntimeMode,
@@ -513,7 +514,10 @@ export const AntigravityDriver: ProviderDriver<
       const configOptions = started.sessionSetupResult.configOptions ?? [];
       const current = configOptions.find((option) => option.id === "model")?.currentValue;
       if (antigravityThinkingConfig(configOptions) !== undefined && typeof current === "string") {
-        for (const model of [...antigravityModelOptions(configOptions), { value: current }]) {
+        const modelsToProbe = antigravityModelOptions(configOptions).filter(
+          (model) => !isAntigravityLegacyOrchestratorModel(model.value),
+        );
+        for (const model of [...modelsToProbe, { value: current }]) {
           yield* runtime.setModel(model.value).pipe(Effect.ignore);
         }
       }
@@ -612,6 +616,7 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
+      orchestratorDefaults: settings.orchestrator,
       onSessionStarted: (started, cwd, session) =>
         provider
           .onSessionStarted(started, cwd, session)
