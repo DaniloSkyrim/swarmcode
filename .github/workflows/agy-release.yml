@@ -1,11 +1,13 @@
 name: Agy release
 
-# Fork only. After a successful "Agy sync" (or by hand), builds an unsigned Windows
-# NSIS installer of the desktop app from the tip of `agy`, rebranded as Swarmcode (see
-# TRADEMARK.md), and publishes it as a GitHub prerelease with the nightly auto-update
-# feed (nightly.yml). See docs/agy-fork.md.
+# Fork only. On pushes to `agy`, after a successful "Agy sync", or by hand, builds an
+# unsigned Windows NSIS installer of the desktop app from the tip of `agy`, rebranded as
+# Swarmcode (see TRADEMARK.md), and publishes it as a GitHub prerelease with the nightly
+# auto-update feed (nightly.yml). See docs/agy-fork.md.
 
 on:
+  push:
+    branches: [agy]
   workflow_run:
     workflows: ["Agy sync"]
     types: [completed]
@@ -26,7 +28,7 @@ concurrency:
 jobs:
   check:
     name: Find agy commit
-    if: github.repository != 'pingdotgg/t3code' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    if: github.repository != 'pingdotgg/t3code' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

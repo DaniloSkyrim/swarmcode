@@ -21,10 +21,18 @@
     "apps/web/src/agy/agyMenuItems.ts",
     "apps/web/src/agy/useAgyUiCommands.ts",
     "apps/web/src/components/swarm/SwarmAddWorkerDialog.tsx",
+    "apps/web/src/components/swarm/SwarmEntranceAnimation.browser.test.tsx",
+    "apps/web/src/components/swarm/SwarmEntranceAnimation.tsx",
+    "apps/web/src/components/swarm/SwarmOverview.browser.test.tsx",
     "apps/web/src/components/swarm/SwarmPanel.tsx",
+    "apps/web/src/components/swarm/SwarmcodeMascotBee.tsx",
     "apps/web/src/components/swarm/ThreadSwarmSection.tsx",
     "apps/web/src/components/swarm/SwarmMemberModelControls.tsx",
     "apps/web/src/components/swarm/openSwarmSurface.ts",
+    "apps/web/src/components/swarm/swarmCommandHighlight.test.ts",
+    "apps/web/src/components/swarm/swarmCommandHighlight.ts",
+    "apps/web/src/components/swarm/swarmEntranceStore.ts",
+    "apps/web/src/components/swarm/useSwarmSurface.browser.test.tsx",
     "apps/web/src/components/swarm/useSwarmSurface.ts",
     "apps/web/src/state/agySwarm.ts",
     "packages/client-runtime/src/agyComposerCommands.ts",
@@ -141,7 +149,11 @@
     },
     {
       "file": "apps/web/src/components/ChatView.tsx",
-      "snippets": ["useSwarmSurface(", "onAddSwarm={swarmSurface.addSwarmSurface}"]
+      "snippets": [
+        "useSwarmSurface(",
+        "onAddSwarm={swarmSurface.addSwarmSurface}",
+        "<SwarmEntranceOverlay />"
+      ]
     },
     {
       "file": "apps/web/src/components/CommandPalette.tsx",
@@ -307,6 +319,34 @@
     {
       "file": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
       "snippets": ["<ThreadSwarmBar"]
+    },
+    {
+      "file": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+      "snippets": ["ComposerSwarmCommandHighlightExtension"]
+    },
+    {
+      "file": "apps/web/src/components/ChatMarkdown.tsx",
+      "snippets": ["highlightSwarmCommand: extensions.userMessage === true,"]
+    },
+    {
+      "file": "apps/web/src/components/chat/SkillInlineText.tsx",
+      "snippets": ["findSwarmCommandRanges(props.text)"]
+    },
+    {
+      "file": "apps/web/src/components/preview/PreviewPanelShell.tsx",
+      "snippets": ["data-right-panel-shell={isInline ? \"true\" : undefined}"]
+    },
+    {
+      "file": "apps/web/src/index.css",
+      "snippets": [".composer-tiptap .composer-swarm-command {"]
+    },
+    {
+      "file": "apps/mobile/src/features/threads/ThreadFeed.tsx",
+      "snippets": ["highlightMobileSwarmCommand("]
+    },
+    {
+      "file": "apps/mobile/src/native/useEnrichedLinkVariants.ts",
+      "snippets": ["if (url === \"t3-swarm://command\") {"]
     }
   ]
 }

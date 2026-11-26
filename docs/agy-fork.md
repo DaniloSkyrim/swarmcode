@@ -49,7 +49,7 @@ If a hook line is gone, re-add it from `hooks.json` (or from `git log -p` on the
 
 ## Releases and versioning
 
-`.github/workflows/agy-release.yml` runs after a successful sync (or by hand, with a `force` option) and skips commits that already have a release. It builds an unsigned Windows NSIS installer on Linux the way upstream does (`cargo xwin` for the resource monitor, `vp run build:desktop:bundle`, then `build-desktop-artifact.ts --platform win --target nsis --arch x64 --skip-build`) and publishes a prerelease with the installer, blockmap and `nightly.yml`. Do not move it to a Windows runner: a Windows host also writes a server compile cache into the payload, which exceeds its file limit.
+`.github/workflows/agy-release.yml` runs on pushes to `agy`, after a successful sync, or by hand (with a `force` option) and skips commits that already have a release. It builds an unsigned Windows NSIS installer on Linux the way upstream does (`cargo xwin` for the resource monitor, `vp run build:desktop:bundle`, then `build-desktop-artifact.ts --platform win --target nsis --arch x64 --skip-build`) and publishes a prerelease with the installer, blockmap and `nightly.yml`. Do not move it to a Windows runner: a Windows host also writes a server compile cache into the payload, which exceeds its file limit.
 
 The version is `<upstream base>-nightly.<YYYYMMDD>.<N>`, from `scripts/resolve-nightly-release.ts`. The base is the next patch after `apps/desktop/package.json`, as for upstream nightlies. `N` is `100000 + the fork's run number`, far above upstream's own run numbers (a few thousand), so the fork build sorts after any upstream nightly from the same day and after the fork's earlier builds. Revisit the offset if upstream's run numbers approach 100000.
 
