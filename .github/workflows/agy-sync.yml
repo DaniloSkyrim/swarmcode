@@ -4,6 +4,10 @@ name: Agy sync
 # into `agy`, and pushes `agy` only when the fork still checks out. See docs/agy-fork.md.
 # This file lives on `agy`, which must be the repository's default branch so the
 # schedule runs.
+#
+# A failed sync goes to a Claude Code repair in its own job, which holds no write token
+# and hands back only a git bundle. The push job runs no repository code: it checks the
+# bundle with git alone before pushing it.
 
 on:
   schedule:
@@ -11,13 +15,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
-  contents: write
-  issues: write
+  contents: read
 
 concurrency:
   group: agy-sync
   cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/pingdotgg/t3code.git
 
 jobs:
   sync:
@@ -25,8 +30,17 @@ jobs:
     if: github.repository != 'pingdotgg/t3code'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+    outputs:
+      upstream_sha: ${{ steps.upstream.outputs.upstream_sha }}
+      stage: ${{ steps.status.outputs.stage }}
+      repair: ${{ steps.status.outputs.repair }}
     env:
-      UPSTREAM_URL: https://github.com/pingdotgg/t3code.git
+      # The repair runs when either Claude secret is set, unless the variable AGY_REPAIR is "off".
+      AGENT_REPAIR: ${{ vars.AGY_REPAIR != 'off' && (secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '') }}
     steps:
       # AGY_SYNC_TOKEN (optional, a PAT with repo and workflow scopes) is needed
       # when upstream changed files under .github/workflows: GITHUB_TOKEN cannot
@@ -37,6 +51,7 @@ jobs:
           ref: agy
           fetch-depth: 0
           token: ${{ secrets.AGY_SYNC_TOKEN || github.token }}
+          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
@@ -65,145 +80,84 @@ jobs:
       - name: Fast-forward main to upstream
         if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
+        env:
+          PUSH_TOKEN: ${{ secrets.AGY_SYNC_TOKEN || github.token }}
         run: |
-          git push origin refs/remotes/upstream/main:refs/heads/main 2>&1 | tee "$LOG_DIR/01-main.log"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=$auth" push origin \
+            refs/remotes/upstream/main:refs/heads/main 2>&1 | tee "$LOG_DIR/01-main.log"
 
-      - name: Merge upstream into agy
+      - name: Setup Vite+
         if: steps.upstream.outputs.up_to_date != 'true'
-        id: merge
-        shell: bash
-        run: |
-          {
-            before="$(git rev-parse HEAD)"
-            lock_resolved=false
-            if ! git merge --no-edit -m "Merge upstream/main into agy" upstream/main; then
-              remaining=()
-              for file in $(git diff --name-only --diff-filter=U); do
-                case "$file" in
-                  pnpm-lock.yaml | apps/web/src/i18n/translations/* | apps/mobile/src/i18n/translations/*)
-                    echo "Taking upstream for $file"
-                    if [[ "$file" == pnpm-lock.yaml ]]; then lock_resolved=true; fi
-                    git checkout --theirs -- "$file" || git rm -f -- "$file"
-                    git add -- "$file" 2>/dev/null || true
-                    ;;
-                  *) remaining+=("$file") ;;
-                esac
-              done
-              if (( ${#remaining[@]} > 0 )); then
-                echo "Unresolved merge conflicts:"
-                printf '  %s\n' "${remaining[@]}"
-                git merge --abort
-                exit 1
-              fi
-              git commit --no-edit
-            fi
-            echo "lock_resolved=$lock_resolved" >> "$GITHUB_OUTPUT"
-          } 2>&1 | tee "$LOG_DIR/02-merge.log"
-
-      # A clean merge keeps a frozen lockfile. A lockfile taken from upstream is
-      # refreshed so fork-only dependency changes, if any, are not lost.
-      - name: Setup dependencies
-        if: steps.upstream.outputs.up_to_date != 'true' && steps.merge.outputs.lock_resolved != 'true'
-        uses: ./.github/actions/setup-ci-deps
-
-      - name: Setup Vite+ without installing
-        if: steps.upstream.outputs.up_to_date != 'true' && steps.merge.outputs.lock_resolved == 'true'
         uses: ./.github/actions/setup-ci-deps
         with:
           install: "false"
 
+      # The stages from here to the checks continue on error, so a failure can go to the
+      # repair job instead of failing the run.
+      - name: Merge upstream into agy
+        if: steps.upstream.outputs.up_to_date != 'true'
+        id: merge
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          bash scripts/agy/sync.sh merge upstream/main 2>&1 | tee "$LOG_DIR/02-merge.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -q '^lock_resolved=true' "$LOG_DIR/02-merge.log"; then
+            echo "lock_resolved=true" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
+
+      # A clean merge keeps a frozen lockfile. A lockfile taken from upstream is
+      # refreshed so fork-only dependency changes, if any, are not lost.
+      - name: Install dependencies
+        if: steps.merge.outcome == 'success' && steps.merge.outputs.lock_resolved != 'true'
+        id: install
+        continue-on-error: true
+        uses: ./.github/actions/setup-ci-deps
+
       - name: Refresh the lockfile
-        if: steps.upstream.outputs.up_to_date != 'true' && steps.merge.outputs.lock_resolved == 'true'
+        if: steps.merge.outcome == 'success' && steps.merge.outputs.lock_resolved == 'true'
+        id: refresh
+        continue-on-error: true
         shell: bash
         run: vp install --no-frozen-lockfile 2>&1 | tee "$LOG_DIR/03-lockfile.log"
 
       - name: Regenerate i18n catalogs
-        if: steps.upstream.outputs.up_to_date != 'true'
+        if: steps.install.outcome == 'success' || steps.refresh.outcome == 'success'
+        id: i18n
+        continue-on-error: true
         shell: bash
-        run: vp run -r i18n:generate 2>&1 | tee "$LOG_DIR/04-i18n.log"
+        run: bash scripts/agy/sync.sh regen 2>&1 | tee "$LOG_DIR/04-i18n.log"
 
-      - name: Commit regenerated files
-        if: steps.upstream.outputs.up_to_date != 'true'
+      - name: Check the fork
+        if: steps.i18n.outcome == 'success'
+        id: checks
+        continue-on-error: true
         shell: bash
-        run: |
-          git add -A pnpm-lock.yaml apps/web/src/i18n/translations apps/mobile/src/i18n/translations
-          if git diff --cached --quiet; then
-            echo "Nothing regenerated."
-          else
-            git commit -m "chore(agy): regenerate lockfile and i18n catalogs after upstream sync"
-          fi
-
-      - name: Check fork hooks
-        if: steps.upstream.outputs.up_to_date != 'true'
-        shell: bash
-        run: node scripts/agy/check-hooks.ts 2>&1 | tee "$LOG_DIR/05-hooks.log"
-
-      - name: Check Swarmcode rebrand targets
-        if: steps.upstream.outputs.up_to_date != 'true'
-        shell: bash
-        run: node scripts/agy/apply-brand.ts --check 2>&1 | tee "$LOG_DIR/06-brand.log"
-
-      - name: Typecheck touched packages
-        if: steps.upstream.outputs.up_to_date != 'true'
-        shell: bash
-        run: |
-          packages=(@t3tools/contracts @t3tools/client-runtime t3 @t3tools/web)
-          if [[ -n "$(find apps/mobile/src -iname '*agy*' -o -iname '*swarm*' 2>/dev/null | head -n 1)" ]]; then
-            packages+=(@t3tools/mobile)
-          fi
-          # One package at a time so a failure in one still reports every other package's errors.
-          failed=()
-          for package in "${packages[@]}"; do
-            echo "::group::typecheck $package"
-            vp run --filter "$package" typecheck 2>&1 | tee -a "$LOG_DIR/07-typecheck.log" || failed+=("$package")
-            echo "::endgroup::"
-          done
-          if (( ${#failed[@]} > 0 )); then
-            # Effect's suggestions bury the errors, and the failure issue quotes only the log's tail.
-            errors="$(grep -E "error TS" "$LOG_DIR/07-typecheck.log" || true)"
-            printf 'Typecheck failed in: %s\n%s\n' "${failed[*]}" "$errors" | tee -a "$LOG_DIR/07-typecheck.log"
-            exit 1
-          fi
-
-      - name: Run fork tests
-        if: steps.upstream.outputs.up_to_date != 'true'
-        shell: bash
-        run: |
-          # Fork tests, plus upstream's tests for every upstream file the fork edits: an upstream
-          # change can break the fork's edit there without any merge conflict.
-          mapfile -t tests < <(
-            {
-              find apps packages -path '*/node_modules' -prune -o -type f \
-                \( -name '*.test.ts' -o -name '*.test.tsx' \) \
-                \( -path '*/agy/*' -o -path '*/toolkits/swarm/*' -o -path '*/components/swarm/*' \
-                   -o -iname '*agy*' -o -iname '*swarm*' \) -print
-              git diff --name-only upstream/main HEAD -- apps packages | grep -E '\.tsx?$' |
-                while read -r file; do
-                  [[ -f "$file" ]] || continue
-                  case "$file" in *.test.ts | *.test.tsx) echo "$file"; continue ;; esac
-                  for candidate in "${file%.*}.test.ts" "${file%.*}.test.tsx" "${file%.*}.browser.test.tsx"; do
-                    if [[ -f "$candidate" ]]; then echo "$candidate"; fi
-                  done
-                done
-            } | sort -u
-          )
-          echo "Fork tests: ${#tests[@]}"
-          printf '  %s\n' "${tests[@]}"
-          if (( ${#tests[@]} == 0 )); then exit 0; fi
-          vp test run --passWithNoTests "${tests[@]}" 2>&1 | tee "$LOG_DIR/08-tests.log"
+        run: bash scripts/agy/sync.sh check all
 
       - name: Push agy
-        if: steps.upstream.outputs.up_to_date != 'true'
+        if: steps.checks.outcome == 'success'
+        id: push
         shell: bash
+        env:
+          PUSH_TOKEN: ${{ secrets.AGY_SYNC_TOKEN || github.token }}
         run: |
           if [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/agy)" ]]; then
             echo "agy is already up to date."
-          else
-            git push origin HEAD:refs/heads/agy
+            exit 0
           fi
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=$auth" \
+            push origin HEAD:refs/heads/agy
 
       - name: Close the sync issue
-        if: success()
+        if: steps.upstream.outputs.up_to_date == 'true' || steps.push.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -213,34 +167,339 @@ jobs:
             gh issue close "$number" --comment "Sync recovered in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
           done
 
-      - name: Report failure in an issue
-        if: failure()
+      - name: Find the failed stage
+        if: steps.upstream.outputs.up_to_date != 'true' && steps.checks.outcome != 'success'
+        id: status
+        shell: bash
+        env:
+          MERGE: ${{ steps.merge.outcome }}
+          INSTALL: ${{ steps.install.outcome }}
+          REFRESH: ${{ steps.refresh.outcome }}
+          I18N: ${{ steps.i18n.outcome }}
+        run: |
+          if [[ "$MERGE" == failure ]]; then
+            stage="merge"
+            echo "02-merge.log" > "$LOG_DIR/failure-log"
+          elif [[ "$INSTALL" == failure ]]; then
+            stage="install (see the Install dependencies step)"
+          elif [[ "$REFRESH" == failure ]]; then
+            stage="install"
+            echo "03-lockfile.log" > "$LOG_DIR/failure-log"
+          elif [[ "$I18N" == failure ]]; then
+            stage="i18n"
+            echo "04-i18n.log" > "$LOG_DIR/failure-log"
+          else
+            stage="checks ($(paste -sd' ' "$LOG_DIR/failed-checks" 2>/dev/null || echo unknown))"
+          fi
+          echo "Failed stage: $stage"
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "repair=$AGENT_REPAIR" >> "$GITHUB_OUTPUT"
+          # Without a repair, this run has failed.
+          [[ "$AGENT_REPAIR" == true ]]
+
+      - name: Upload sync logs
+        if: always() && steps.upstream.outputs.up_to_date != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agy-sync-logs
+          path: ${{ runner.temp }}/agy-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  repair:
+    name: Repair the sync with Claude
+    needs: sync
+    if: needs.sync.outputs.repair == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Read-only on purpose: the agent works on upstream code it did not write.
+    permissions:
+      contents: read
+    env:
+      UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+      STAGE: ${{ needs.sync.outputs.stage }}
+      MODEL: ${{ vars.AGY_REPAIR_MODEL || 'claude-sonnet-5-5' }}
+      CLAUDE_CODE_VERSION: 2.1.323
+    steps:
+      - name: Checkout agy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: agy
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Download sync logs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agy-sync-logs
+          path: ${{ runner.temp }}/agy-logs
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install: "false"
+
+      # Recreates the failed state. A clean merge is also installed and regenerated, so
+      # the agent starts where the checks failed; a conflicted one is left to the agent.
+      - name: Merge upstream again
+        shell: bash
+        run: |
+          echo "REPAIR_DIR=$RUNNER_TEMP/agy-repair" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/agy-repair"
+          git config user.name "agy-sync[bot]"
+          git config user.email "agy-sync@users.noreply.github.com"
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags upstream main
+          git cat-file -e "$UPSTREAM_SHA^{commit}"
+          if bash scripts/agy/sync.sh merge "$UPSTREAM_SHA"; then
+            vp install --no-frozen-lockfile || true
+            bash scripts/agy/sync.sh regen || true
+          fi
+          git rev-parse HEAD > "$RUNNER_TEMP/agy-repair/start-head"
+
+      - name: Repair with Claude
+        timeout-minutes: 45
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          BUDGET_USD: ${{ vars.AGY_REPAIR_BUDGET_USD || '10' }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/claude" --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+          # GitHub passes an unset secret as an empty string, which Claude Code would try as a credential.
+          extra=()
+          if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+            unset CLAUDE_CODE_OAUTH_TOKEN
+            extra+=(--max-budget-usd "$BUDGET_USD")
+          else
+            unset ANTHROPIC_API_KEY
+          fi
+          logs="$RUNNER_TEMP/agy-logs"
+          prompt="$REPAIR_DIR/prompt.md"
+          fence='```'
+          {
+            cat scripts/agy/sync-repair.md
+            echo
+            echo "Failed stage: $STAGE"
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [[ -n "$conflicts" ]]; then
+              printf '\nConflicted files (dependencies are not installed yet):\n%s\n' "$conflicts"
+            fi
+            log="$logs/$(cat "$logs/failure-log" 2>/dev/null || true)"
+            if [[ -f "$log" ]]; then
+              printf '\nLast lines of %s:\n\n%s\n' "$(basename "$log")" "$fence"
+              tail -n 200 "$log" | tail -c 30000
+              echo "$fence"
+            fi
+          } > "$prompt"
+          # The agent's own check runs log elsewhere, so the report keeps the sync's logs.
+          LOG_DIR="$RUNNER_TEMP/agent-logs" "$RUNNER_TEMP/claude/node_modules/.bin/claude" -p \
+            --model "$MODEL" --max-turns 100 "${extra[@]}" \
+            --allowedTools Read Edit Write Glob Grep Bash \
+            --disallowedTools WebFetch WebSearch "Bash(git commit *)" "Bash(git push *)" \
+              "Bash(git reset *)" "Bash(git merge *)" "Bash(git rebase *)" "Bash(git stash *)" "Bash(gh *)" \
+            < "$prompt" 2>&1 | tee "$REPAIR_DIR/report.log"
+
+      - name: Verify the repair
+        shell: bash
+        run: |
+          {
+            if [[ "$(git rev-parse HEAD)" != "$(cat "$REPAIR_DIR/start-head")" ]]; then
+              echo "The agent moved HEAD; refusing its work."
+              exit 1
+            fi
+            unmerged="$(git diff --name-only --diff-filter=U)"
+            if [[ -n "$unmerged" ]]; then
+              printf 'Unresolved conflicts remain:\n%s\n' "$unmerged"
+              exit 1
+            fi
+            git add -A
+            markers="$(git diff --cached --check 2>&1 | grep 'leftover conflict marker' || true)"
+            if [[ -n "$markers" ]]; then
+              printf 'Conflict markers left:\n%s\n' "$markers"
+              exit 1
+            fi
+            if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+              git commit --no-edit
+            elif ! git diff --cached --quiet; then
+              git commit -m "fix(agy): repair the fork after merging upstream main" \
+                -m "Automated by the agy sync with $MODEL."
+            fi
+            vp install --no-frozen-lockfile
+            bash scripts/agy/sync.sh regen
+            LOG_DIR="$REPAIR_DIR" bash scripts/agy/sync.sh check all
+            git bundle create "$REPAIR_DIR/agy.bundle" HEAD ^origin/agy ^"$UPSTREAM_SHA"
+          } 2>&1 | tee "$REPAIR_DIR/verify.log"
+
+      - name: Upload the repair
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agy-repair
+          path: ${{ runner.temp }}/agy-repair
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Runs no repository code, so nothing the agent wrote can reach the write token.
+  push:
+    name: Push the repaired agy
+    needs: [sync, repair]
+    if: needs.repair.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: write
+    env:
+      UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+    steps:
+      - name: Checkout agy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: agy
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/
+          sparse-checkout-cone-mode: false
+
+      - name: Download the repair
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agy-repair
+          path: ${{ runner.temp }}/agy-repair
+
+      # The bundle must extend agy and upstream, and must leave .github and the sync
+      # script exactly as a plain merge would, so the agent cannot change the workflow
+      # or the checks that let its own work through.
+      - name: Check and push the repair
+        shell: bash
+        env:
+          PUSH_TOKEN: ${{ secrets.AGY_SYNC_TOKEN || github.token }}
+        run: |
+          bundle="$RUNNER_TEMP/agy-repair/agy.bundle"
+          git fetch --no-tags "$UPSTREAM_URL" main
+          git cat-file -e "$UPSTREAM_SHA^{commit}"
+          git bundle verify "$bundle"
+          git fetch --no-tags "$bundle" HEAD
+          head="$(git rev-parse FETCH_HEAD)"
+          git merge-base --is-ancestor origin/agy "$head"
+          git merge-base --is-ancestor "$UPSTREAM_SHA" "$head"
+          set +e
+          merged="$(git merge-tree --write-tree --name-only origin/agy "$UPSTREAM_SHA")"
+          set -e
+          tree="$(head -n 1 <<< "$merged")"
+          conflicted="$(sed -n '2,/^$/p' <<< "$merged")"
+          for path in .github scripts/agy/sync.sh; do
+            if grep -q "^$path" <<< "$conflicted"; then
+              echo "Upstream conflicts with the fork in $path; that needs a maintainer."
+              exit 1
+            fi
+            if [[ "$(git rev-parse "$tree:$path")" != "$(git rev-parse "$head:$path")" ]]; then
+              echo "The repair changed $path; refusing it."
+              exit 1
+            fi
+          done
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=$auth" \
+            push origin "$head:refs/heads/agy"
+          {
+            echo "### agy sync repaired"
+            echo
+            echo "Review the repair commits on agy. The agent's report:"
+            echo
+            echo '```'
+            tail -n 40 "$RUNNER_TEMP/agy-repair/report.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Close the sync issue
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          UPSTREAM_SHA: ${{ steps.upstream.outputs.upstream_sha }}
+        run: |
+          for number in $(gh issue list --label agy-sync --state open --json number --jq '.[].number'); do
+            gh issue close "$number" --comment "Sync repaired automatically in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Review the repair commits on agy."
+          done
+
+  report:
+    name: Report failure in an issue
+    needs: [sync, repair, push]
+    if: always() && (needs.sync.result == 'failure' || needs.repair.result == 'failure' || needs.push.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Download logs
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: agy-*
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Open or update the issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+          STAGE: ${{ needs.sync.outputs.stage }}
+          SYNC: ${{ needs.sync.result }}
+          REPAIR: ${{ needs.repair.result }}
+          PUSH: ${{ needs.push.result }}
+          REPAIR_OFF: ${{ vars.AGY_REPAIR == 'off' }}
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
-            --jq '[.jobs[].steps[] | select(.conclusion == "failure") | .name] | first' || true)"
-          log="$(ls -1 "$LOG_DIR"/*.log 2>/dev/null | tail -n 1 || true)"
+          sync_logs="$RUNNER_TEMP/artifacts/agy-sync-logs"
+          repair_logs="$RUNNER_TEMP/artifacts/agy-repair"
+          failed="${STAGE:-}"
+          log=""
+          if [[ -f "$sync_logs/failure-log" ]]; then log="$sync_logs/$(cat "$sync_logs/failure-log")"; fi
+          if [[ "$PUSH" == failure ]]; then
+            repair="the agent's fix passed the checks, but the push job refused or failed to push it (see the run)"
+            log=""
+          elif [[ "$REPAIR" == failure ]]; then
+            repair="the agent failed, timed out, or its fix did not pass the checks"
+            if [[ -f "$repair_logs/verify.log" ]]; then log="$repair_logs/verify.log"; fi
+            if [[ -f "$repair_logs/failure-log" ]]; then log="$repair_logs/$(cat "$repair_logs/failure-log")"; fi
+          elif [[ -z "$failed" ]]; then
+            repair="does not apply to this stage"
+          elif [[ "$REPAIR_OFF" == true ]]; then
+            repair="turned off (AGY_REPAIR is off)"
+          else
+            repair="not configured (add CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)"
+          fi
+          if [[ -z "$failed" ]]; then
+            failed="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+              --jq '[.jobs[].steps[] | select(.conclusion == "failure") | .name] | first' || true)"
+          fi
           excerpt=""
-          if [[ -n "$log" ]]; then excerpt="$(tail -n 80 "$log" | tail -c 20000)"; fi
+          if [[ -f "$log" ]]; then excerpt="$(tail -n 80 "$log" | tail -c 20000)"; fi
           body_file="$RUNNER_TEMP/agy-issue.md"
           fence='```'
           {
             echo "The agy sync failed, so agy was not updated."
             echo
-            echo "- Failing step: ${failed:-unknown}"
+            echo "- Failing stage: ${failed:-unknown}"
+            echo "- Automatic repair: $repair"
             echo "- Run: $run_url"
             echo "- Upstream main: ${UPSTREAM_SHA:-unknown}"
-            echo
-            echo "Last log lines:"
-            echo
-            echo "$fence"
-            echo "$excerpt"
-            echo "$fence"
+            if [[ -n "$excerpt" ]]; then
+              printf '\nLast log lines:\n\n%s\n%s\n%s\n' "$fence" "$excerpt" "$fence"
+            fi
+            if [[ -f "$repair_logs/report.log" ]]; then
+              printf '\nThe agent'"'"'s report:\n\n%s\n' "$fence"
+              tail -n 40 "$repair_logs/report.log" | tail -c 8000
+              echo "$fence"
+            fi
             echo
             echo "Resolve it locally with the steps in docs/agy-fork.md, then push agy."
           } > "$body_file"

@@ -25,12 +25,14 @@ Hook lines in upstream files are kept to one to a few lines each, so merges stay
 
 1. Stops right there, successfully, when `agy` already contains `upstream/main` and `main` already matches it.
 2. Fast-forwards `main` to `upstream/main` and pushes it.
-3. Merges `upstream/main` into `agy`. Conflicts in `pnpm-lock.yaml` and the web and mobile i18n catalogs take upstream's side; any other conflict fails the run.
-4. Reinstalls (refreshing the lockfile if it was taken from upstream), runs `vp run -r i18n:generate`, and commits what changed.
-5. Runs the hook check, typechecks contracts, client-runtime, server, web (and mobile when it has fork files) one package at a time so every failing package is reported, and runs the fork's tests plus upstream's tests for each upstream file the fork edits. An upstream change can break a fork edit with no merge conflict at all (a widened type, or a fork helper shadowed by a new upstream one with the same name), and only those tests catch it.
-6. Pushes `agy` only if every step passed.
+3. Merges `upstream/main` into `agy` (`bash scripts/agy/sync.sh merge`). Conflicts in `pnpm-lock.yaml` and the web, mobile and desktop i18n catalogs take upstream's side.
+4. Reinstalls (refreshing the lockfile if it was taken from upstream), then regenerates and commits the i18n catalogs (`sync.sh regen`).
+5. Runs `sync.sh check all`: the hook check, the rebrand check, a typecheck of contracts, client-runtime, server, web (and mobile when it has fork files) one package at a time so every failing package is reported, and the fork's tests plus upstream's tests for each upstream file the fork edits. An upstream change can break a fork edit with no merge conflict at all (a widened type, or a fork helper shadowed by a new upstream one with the same name), and only those tests catch it.
+6. Pushes `agy` if every stage passed.
 
-On failure it opens an issue labeled `agy-sync` (or comments on the open one) with the failing step and a log excerpt, and closes it on the next success.
+When a stage fails and a Claude secret is set, a `repair` job redoes the merge and hands the failure to Claude Code in headless mode (instructions in `scripts/agy/sync-repair.md`). The agent cannot commit, and the job has only read access. The job then refuses leftover conflicts, commits, reruns the same checks and uploads the result as a git bundle. A separate `push` job, which runs no repository code, pushes the bundle only if it extends both `agy` and upstream and leaves `.github` and `scripts/agy/sync.sh` exactly as a plain merge would. This keeps anything the agent writes, including through prompt injection in upstream code, away from the write token. Review the repair commits on `agy`: the checks passing does not prove that the fix is right.
+
+On failure the `report` job opens an issue labeled `agy-sync` (or comments on the open one) with the failing stage, what the repair did, a log excerpt and the agent's report. The next success closes it.
 
 To resolve a failed sync locally:
 
@@ -40,7 +42,7 @@ git checkout main && git merge --ff-only upstream/main && git push origin main
 git checkout agy && git merge upstream/main
 # fix conflicts, keep the fork's hook lines, prefer upstream where it did the same thing
 vp install && vp run -r i18n:generate
-node scripts/agy/check-hooks.ts
+bash scripts/agy/sync.sh check all
 vp run check:changed
 git push origin agy
 ```
@@ -79,5 +81,6 @@ Download the `.exe` from the latest prerelease and run it. After that the app fo
 - Default branch: `agy` (scheduled workflows run from the default branch, and the workflow files exist only on `agy`).
 - Settings, Actions, General, Workflow permissions: read and write, so `GITHUB_TOKEN` gets `contents: write` and `issues: write` (both workflows request them explicitly).
 - Secret `AGY_SYNC_TOKEN`: a personal access token with `repo` and `workflow` scopes (fine-grained: Contents and Workflows, read and write). Needed whenever upstream changes files under `.github/workflows`, because `GITHUB_TOKEN` cannot push those. Pushes made with the token also trigger other workflows.
+- Secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, billed to a Claude subscription) or `ANTHROPIC_API_KEY` (billed per token): turns on the sync repair. Without either, a failed sync only opens the issue. Optional repository variables: `AGY_REPAIR_MODEL` (default `claude-sonnet-5-5`), `AGY_REPAIR_BUDGET_USD` (default `10`, the cap per repair), and `AGY_REPAIR` set to `off` to disable it.
 - Disable the inherited upstream workflows (Actions tab, or Settings, Actions, General) apart from the two `Agy` ones. They target Blacksmith runners and upstream-only secrets and would only queue.
 - `main` must stay an untouched mirror, or the fast-forward step fails.

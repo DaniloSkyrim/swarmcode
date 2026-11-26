@@ -39,7 +39,9 @@
     "packages/client-runtime/src/state/agySwarm.ts",
     "packages/contracts/src/agy.ts",
     "scripts/agy/apply-brand.ts",
-    "scripts/agy/brand/swarmcode-windows.ico"
+    "scripts/agy/brand/swarmcode-windows.ico",
+    "scripts/agy/sync-repair.md",
+    "scripts/agy/sync.sh"
   ],
   "hooks": [
     {
