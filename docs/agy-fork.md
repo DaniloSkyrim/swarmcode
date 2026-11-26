@@ -27,7 +27,7 @@ Hook lines in upstream files are kept to one to a few lines each, so merges stay
 2. Fast-forwards `main` to `upstream/main` and pushes it.
 3. Merges `upstream/main` into `agy`. Conflicts in `pnpm-lock.yaml` and the web and mobile i18n catalogs take upstream's side; any other conflict fails the run.
 4. Reinstalls (refreshing the lockfile if it was taken from upstream), runs `vp run -r i18n:generate`, and commits what changed.
-5. Runs the hook check, typechecks contracts, client-runtime, server, web (and mobile when it has fork files), and runs the fork's tests.
+5. Runs the hook check, typechecks contracts, client-runtime, server, web (and mobile when it has fork files) one package at a time so every failing package is reported, and runs the fork's tests plus upstream's tests for each upstream file the fork edits. An upstream change can break a fork edit with no merge conflict at all (a widened type, or a fork helper shadowed by a new upstream one with the same name), and only those tests catch it.
 6. Pushes `agy` only if every step passed.
 
 On failure it opens an issue labeled `agy-sync` (or comments on the open one) with the failing step and a log excerpt, and closes it on the next success.

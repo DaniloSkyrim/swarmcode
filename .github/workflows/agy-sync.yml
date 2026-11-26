@@ -147,21 +147,45 @@ jobs:
         if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
-          filters=(--filter @t3tools/contracts --filter @t3tools/client-runtime --filter t3 --filter @t3tools/web)
+          packages=(@t3tools/contracts @t3tools/client-runtime t3 @t3tools/web)
           if [[ -n "$(find apps/mobile/src -iname '*agy*' -o -iname '*swarm*' 2>/dev/null | head -n 1)" ]]; then
-            filters+=(--filter @t3tools/mobile)
+            packages+=(@t3tools/mobile)
           fi
-          vp run --parallel --concurrency-limit 2 "${filters[@]}" typecheck 2>&1 | tee "$LOG_DIR/07-typecheck.log"
+          # One package at a time so a failure in one still reports every other package's errors.
+          failed=()
+          for package in "${packages[@]}"; do
+            echo "::group::typecheck $package"
+            vp run --filter "$package" typecheck 2>&1 | tee -a "$LOG_DIR/07-typecheck.log" || failed+=("$package")
+            echo "::endgroup::"
+          done
+          if (( ${#failed[@]} > 0 )); then
+            # Effect's suggestions bury the errors, and the failure issue quotes only the log's tail.
+            errors="$(grep -E "error TS" "$LOG_DIR/07-typecheck.log" || true)"
+            printf 'Typecheck failed in: %s\n%s\n' "${failed[*]}" "$errors" | tee -a "$LOG_DIR/07-typecheck.log"
+            exit 1
+          fi
 
       - name: Run fork tests
         if: steps.upstream.outputs.up_to_date != 'true'
         shell: bash
         run: |
+          # Fork tests, plus upstream's tests for every upstream file the fork edits: an upstream
+          # change can break the fork's edit there without any merge conflict.
           mapfile -t tests < <(
-            find apps packages -path '*/node_modules' -prune -o -type f \
-              \( -name '*.test.ts' -o -name '*.test.tsx' \) \
-              \( -path '*/agy/*' -o -path '*/toolkits/swarm/*' -o -path '*/components/swarm/*' \
-                 -o -iname '*agy*' -o -iname '*swarm*' \) -print | sort -u
+            {
+              find apps packages -path '*/node_modules' -prune -o -type f \
+                \( -name '*.test.ts' -o -name '*.test.tsx' \) \
+                \( -path '*/agy/*' -o -path '*/toolkits/swarm/*' -o -path '*/components/swarm/*' \
+                   -o -iname '*agy*' -o -iname '*swarm*' \) -print
+              git diff --name-only upstream/main HEAD -- apps packages | grep -E '\.tsx?$' |
+                while read -r file; do
+                  [[ -f "$file" ]] || continue
+                  case "$file" in *.test.ts | *.test.tsx) echo "$file"; continue ;; esac
+                  for candidate in "${file%.*}.test.ts" "${file%.*}.test.tsx" "${file%.*}.browser.test.tsx"; do
+                    if [[ -f "$candidate" ]]; then echo "$candidate"; fi
+                  done
+                done
+            } | sort -u
           )
           echo "Fork tests: ${#tests[@]}"
           printf '  %s\n' "${tests[@]}"
