@@ -46,6 +46,13 @@ export const ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS = {
   executorEffort: "executorEffort",
 } as const;
 
+export const ANTIGRAVITY_ORCHESTRATOR_OWNED_OPTION_IDS = [
+  ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerModel,
+  ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.plannerEffort,
+  ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorModel,
+  ANTIGRAVITY_ORCHESTRATOR_OPTION_IDS.executorEffort,
+] as const;
+
 export const DEFAULT_ANTIGRAVITY_ORCHESTRATOR_SETTINGS = {
   plannerModel: "gemini-4-neon" as AntigravityOrchestratorPlannerModel,
   plannerEffort: "medium" as AntigravityThinkingLevel,

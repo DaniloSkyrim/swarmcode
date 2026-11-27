@@ -290,7 +290,7 @@ function buildReviewPhasePrompt(): string {
   ].join("\n");
 }
 
-const applyAntigravityModelAndEffort = Effect.fn("applyAntigravityModelAndEffort")(
+export const applyAntigravityModelAndEffort = Effect.fn("applyAntigravityModelAndEffort")(
   function* (input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],

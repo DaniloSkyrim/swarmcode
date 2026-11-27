@@ -174,7 +174,7 @@ describe("AcpMcpStdioBridge", () => {
       const bridge = runAcpMcpStdioBridge({
         endpoint: "http://127.0.0.1:1/mcp",
         authorization: "Bearer bridge-test",
-        toolExposure: "proxy",
+        toolExposure: "deferred-proxy",
         input,
         output: { write: () => {} },
         fetchImplementation: async (_url, init) => {
@@ -190,7 +190,7 @@ describe("AcpMcpStdioBridge", () => {
       input.end();
       yield* Fiber.join(fiber);
 
-      expect(requests[0]?.get("t3-tool-exposure")).toBe("proxy");
+      expect(requests[0]?.get("t3-tool-exposure")).toBe("deferred-proxy");
     }),
   );
 

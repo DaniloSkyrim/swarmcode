@@ -442,8 +442,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
   tool_search: tool(["Search", "Searching", "Searched", "T3 Code tools"], null),
-  tool_call: tool(["Call", "Calling", "Called", "a T3 Code tool"], null),
-  t3_call: tool(["Call", "Calling", "Called", "a T3 Code tool"], null),
   t3_swarm: tool(["Manage", "Managing", "Managed", "the swarm"], null),
   post_message: tool(["Post", "Posting", "Posted", "to the swarm board"], null),
   read_board: tool(["Read", "Reading", "Read", "the swarm board"], null),
@@ -495,11 +493,17 @@ function parseT3McpToolName(value: string): string | null {
 
   const prefixed = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
   const candidate = prefixed?.groups?.tool ?? label;
-  if (Object.hasOwn(T3_MCP_TOOLS, candidate)) return candidate;
+  if (
+    candidate === "tool_call" ||
+    candidate === "t3_call" ||
+    Object.hasOwn(T3_MCP_TOOLS, candidate)
+  ) {
+    return candidate;
+  }
   // OpenCode 2 thread prefixes can contain underscores; choose the longest known tool-name suffix.
   if (!/^t3-code-/i.test(label)) return null;
   let longest: string | null = null;
-  for (const tool of Object.keys(T3_MCP_TOOLS)) {
+  for (const tool of [...Object.keys(T3_MCP_TOOLS), "tool_call", "t3_call"]) {
     if (label.endsWith(`_${tool}`) && tool.length > (longest?.length ?? 0)) longest = tool;
   }
   return longest;
@@ -545,7 +549,7 @@ export function unwrapT3McpProxyCall(
   ) {
     return null;
   }
-  const rawArgs = fields.arguments;
+  const rawArgs = fields?.arguments;
   let innerInput: unknown = rawArgs;
   if (typeof rawArgs === "string") {
     try {
