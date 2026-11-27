@@ -1891,3 +1891,109 @@ it.effect(
       { tuning: { wakeCoalesceMs: 0, batchWarmupStaggerMs: 2_000 } },
     ),
 );
+
+it.effect(
+  "caps near-compaction threshold at 140k for large context windows and surfaces pressure in coordinator wakes",
+  () =>
+    withSwarmHarness(
+      ({ swarm, coordinatorId, workerId, sent, emitProviderThreadContext, nextWake }) =>
+        Effect.gen(function* () {
+          yield* emitProviderThreadContext(workerId, {
+            usedTokens: 150_000,
+            maxTokens: 452_144,
+          });
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          yield* swarm.read(coordinatorId, {});
+
+          const statusText = yield* swarm.status(coordinatorId);
+          assert.include(statusText, "ctx ~150k/452k [near compaction]");
+
+          const wake = nextWake();
+          yield* swarm.post(workerId, { text: "@coordinator finished slice 1" });
+          yield* wake;
+          assert.lengthOf(sent, 1);
+          assert.include(
+            sent[0]!.text,
+            "Context pressure: @worker (ctx ~150k/452k [near compaction])",
+          );
+        }),
+    ),
+);
+
+it.live(
+  "guards against consecutive swarm_wait timeouts in one turn and resets on turn completion or board action",
+  () =>
+    withSwarmHarness(({ swarm, coordinatorId, workerId, emitRunStatus, awaitDomainSubscription }) =>
+      Effect.gen(function* () {
+        const firstResult = yield* swarm.wait(coordinatorId, { timeoutSeconds: 1 });
+        assert.isTrue(firstResult.timedOut);
+        assert.include(firstResult.posts, "Do NOT call swarm_wait again in a loop");
+
+        // Second wait in the same turn with no new posts/actions refuses immediately without blocking.
+        const refused = yield* swarm.wait(coordinatorId, { timeoutSeconds: 1 }).pipe(Effect.flip);
+        assert.include(refused.message, "Already timed out waiting for board posts in this turn");
+
+        // Ending the turn via run.updated resets the guard.
+        yield* emitRunStatus(coordinatorId, "completed");
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        const secondResult = yield* swarm.wait(coordinatorId, { timeoutSeconds: 1 });
+        assert.isTrue(secondResult.timedOut);
+
+        // An active board action also resets the guard before another wait.
+        yield* swarm.post(coordinatorId, { text: "@worker checking in" });
+        const subscribed = awaitDomainSubscription();
+        const watcherReady = yield* Deferred.make<void>();
+        const parked = yield* Deferred.make<void>();
+        const watcher = yield* Effect.forkChild(
+          Stream.runForEach(swarm.changes(coordinatorId), (snap) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(watcherReady, undefined);
+              if (
+                snap?.members.find((member) => member.name === "coordinator")?.activity ===
+                "swarm_wait"
+              ) {
+                yield* Deferred.succeed(parked, undefined);
+              }
+            }),
+          ),
+        );
+        yield* Deferred.await(watcherReady);
+        yield* subscribed;
+        const waiter = yield* Effect.forkChild(swarm.wait(coordinatorId, { timeoutSeconds: 10 }));
+        yield* Deferred.await(parked);
+        yield* swarm.post(workerId, { text: "@coordinator arrived" });
+        const arrived = yield* Fiber.join(waiter);
+        assert.isFalse(arrived.timedOut);
+        assert.include(arrived.posts, "arrived");
+        yield* Fiber.interrupt(watcher);
+      }),
+    ),
+);
+
+it.effect("skips batchWarmupStaggerMs for Antigravity worker batches", () =>
+  withSwarmHarness(
+    ({ swarm, coordinatorId, launchedPrompts, setModelSelection }) =>
+      Effect.gen(function* () {
+        setModelSelection(coordinatorId, {
+          instanceId: ProviderInstanceId.make("antigravity"),
+          model: "gemini-4-neon",
+        });
+        const beforeCount = launchedPrompts.length;
+        const addFiber = yield* Effect.forkChild(
+          swarm.add(coordinatorId, {
+            workers: [
+              { name: "agy-1", brief: "first" },
+              { name: "agy-2", brief: "second" },
+            ],
+          }),
+        );
+        // Must launch all Antigravity workers immediately without waiting for warmup signal or TestClock.
+        yield* Fiber.join(addFiber);
+        assert.lengthOf(launchedPrompts, beforeCount + 2);
+      }),
+    { tuning: { wakeCoalesceMs: 0, batchWarmupStaggerMs: 2_000 } },
+  ),
+);

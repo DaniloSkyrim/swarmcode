@@ -184,8 +184,8 @@ const ReadBoardTool = Tool.make("read_board", {
 
 const SwarmWaitTool = Tool.make("swarm_wait", {
   description:
-    "Wait inside your turn for board posts after #since that mention you (mentions_only, the default) or any post you can see. " +
-    "Returns at most 45 seconds later with timedOut. To wait longer, end your turn: a mention wakes you.",
+    "Short in-turn wait (<=45s) for board posts after #since that mention you (mentions_only, the default) or any post you can see. " +
+    "Returns with timedOut if nothing arrives. Do NOT call in a loop after timedOut: true; end your turn instead to sleep for free and wake automatically on mention.",
   parameters: Schema.Struct({
     since: Schema.optional(Schema.Int),
     mentions_only: Schema.optional(Schema.Boolean),

@@ -412,25 +412,44 @@ const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 const formatK = (tokens: number) => `${Math.round(tokens / 1_000)}k`;
 
+const NEAR_COMPACTION_CAP_TOKENS = 140_000;
+
+const contextWindowCap = (metrics: Board.StoredMemberMetrics): number | null =>
+  metrics.maxContextTokens !== undefined &&
+  metrics.maxContextTokens !== null &&
+  metrics.maxContextTokens > 0
+    ? metrics.maxContextTokens
+    : null;
+
+const isNearCompaction = (metrics: Board.StoredMemberMetrics | undefined): boolean => {
+  if (metrics?.lastContextTokens === undefined || metrics.lastContextTokens <= 0) {
+    return false;
+  }
+  const ctxCap = contextWindowCap(metrics);
+  const nearLimit =
+    ctxCap !== null
+      ? Math.min(ctxCap * 0.72, NEAR_COMPACTION_CAP_TOKENS)
+      : NEAR_COMPACTION_CAP_TOKENS;
+  return metrics.lastContextTokens >= nearLimit;
+};
+
+const formatContextUsage = (metrics: Board.StoredMemberMetrics): string | null => {
+  if (metrics.lastContextTokens === undefined || metrics.lastContextTokens <= 0) {
+    return null;
+  }
+  const ctxCap = contextWindowCap(metrics);
+  const nearTag = isNearCompaction(metrics) ? " [near compaction]" : "";
+  return ctxCap !== null
+    ? `ctx ~${formatK(metrics.lastContextTokens)}/${formatK(ctxCap)}${nearTag}`
+    : `ctx ~${formatK(metrics.lastContextTokens)}${nearTag}`;
+};
+
 const formatStatusTelemetry = (member: Board.StoredMember): string => {
   if (!Board.isLive(member) || member.metrics === undefined) return "";
   const metrics = member.metrics;
   const parts: string[] = [];
-  if (metrics.lastContextTokens !== undefined && metrics.lastContextTokens > 0) {
-    const ctxCap =
-      metrics.maxContextTokens !== undefined &&
-      metrics.maxContextTokens !== null &&
-      metrics.maxContextTokens > 0
-        ? metrics.maxContextTokens
-        : null;
-    const nearLimit = ctxCap !== null ? ctxCap * 0.72 : 140_000;
-    const nearTag = metrics.lastContextTokens >= nearLimit ? " [near compaction]" : "";
-    parts.push(
-      ctxCap !== null
-        ? `ctx ~${formatK(metrics.lastContextTokens)}/${formatK(ctxCap)}${nearTag}`
-        : `ctx ~${formatK(metrics.lastContextTokens)}${nearTag}`,
-    );
-  }
+  const ctxLabel = formatContextUsage(metrics);
+  if (ctxLabel !== null) parts.push(ctxLabel);
   if (metrics.inputTokens > 0) {
     const cachePct = Math.min(
       100,
@@ -504,6 +523,8 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
   };
   /** Threads parked in `swarm_wait`: a post reaches them there, not as a queued message. */
   const parked = new Map<string, number>();
+  /** Consecutive `swarm_wait` timeouts in the current turn, reset on turn end, posts, or board actions. */
+  const consecutiveWaitTimeouts = new Map<string, number>();
   /** The highest post each thread was last rung for. */
   const rungSeq = new Map<string, number>();
   const changed = yield* PubSub.unbounded<string>();
@@ -888,7 +909,32 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
     const catchUpLine = caughtUp
       ? `Caught up through #${latest.seq}; no need to call read_board before acting. Act on what is yours, or end your turn if nothing is.`
       : `Catch up on earlier unread posts with read_board{since:${target.lastReadSeq}} and act on what is yours. If nothing is, end your turn.`;
-    const text = `${heading}\n${shown.map(Board.formatPost).join("\n\n")}\n\n${catchUpLine}${coordinatorHint}`;
+    let contextPressureNote = "";
+    if (target.role === "coordinator") {
+      const saturatedSenders: string[] = [];
+      const seenSenders = new Set<string>();
+      for (const post of shown) {
+        if (seenSenders.has(post.from)) continue;
+        seenSenders.add(post.from);
+        const senderMember = Board.memberByName(swarm, post.from);
+        if (
+          senderMember !== undefined &&
+          senderMember.role !== "coordinator" &&
+          Board.isLive(senderMember) &&
+          senderMember.metrics !== undefined &&
+          isNearCompaction(senderMember.metrics)
+        ) {
+          const usage = formatContextUsage(senderMember.metrics);
+          if (usage !== null) {
+            saturatedSenders.push(`@${senderMember.name} (${usage})`);
+          }
+        }
+      }
+      if (saturatedSenders.length > 0) {
+        contextPressureNote = `\nContext pressure: ${saturatedSenders.join(", ")}: prefer a fresh worker for new large tasks instead of piling onto it.`;
+      }
+    }
+    const text = `${heading}\n${shown.map(Board.formatPost).join("\n\n")}\n\n${catchUpLine}${coordinatorHint}${contextPressureNote}`;
     const delivered = yield* threads
       .sendToThread({
         projectId: ProjectId.make(swarm.projectId),
@@ -1321,6 +1367,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
     // before performing parallel thread/worktree launches so board I/O stays responsive.
     const prepared = yield* withEnsuredSwarmLock(callerThreadId, ({ swarm, member: adder }) =>
       Effect.gen(function* () {
+        consecutiveWaitTimeouts.delete(adder.threadId);
         if (adder.killedAt !== null) return yield* refuse("You were removed from this swarm.");
         const adderShell = yield* shellOf(adder.threadId);
         if (adderShell === null) return yield* refuse("Your thread was not found.");
@@ -1423,9 +1470,23 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
     // Phase 2: launch all workers concurrently outside the swarm lock.
     // When adding >1 non-forked workers on the same (instanceId, model), stagger wave 2 behind
     // the group leader's first turn update (or batchWarmupStaggerMs) so provider prompt caches warm first.
+    // Skip stagger on Antigravity: unique per-conversation prompt metadata prevents cross-worker turn-0 cache sharing.
     const modelGroupCounts = new Map<string, number>();
+    const skipWarmupProviders = new Set<string>();
     if (batchWarmupStaggerMs > 0) {
+      const allProviders = yield* providers.getProviders.pipe(Effect.orElseSucceed(() => []));
+      const driverByInstance = new Map(
+        allProviders.map((provider) => [provider.instanceId, provider.driver] as const),
+      );
       for (const spec of prepared.specs) {
+        const driver = driverByInstance.get(spec.model.instanceId);
+        if (
+          driver === "antigravity" ||
+          (driver === undefined && spec.model.instanceId === "antigravity")
+        ) {
+          skipWarmupProviders.add(spec.model.instanceId);
+          continue;
+        }
         if (spec.forkFrom !== undefined) continue;
         const key = `${spec.model.instanceId}\0${spec.model.model}`;
         modelGroupCounts.set(key, (modelGroupCounts.get(key) ?? 0) + 1);
@@ -1447,6 +1508,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
       if (
         batchWarmupStaggerMs > 0 &&
         spec.forkFrom === undefined &&
+        !skipWarmupProviders.has(spec.model.instanceId) &&
         (modelGroupCounts.get(key) ?? 0) > 1
       ) {
         const existingSignal = leaderSignals.get(key);
@@ -1631,6 +1693,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
   const kill: AgySwarmShape["kill"] = (callerThreadId, name, input) =>
     withExistingSwarmLock(callerThreadId, ({ swarm, member: caller }) =>
       Effect.gen(function* () {
+        consecutiveWaitTimeouts.delete(caller.threadId);
         const targets = Board.membersNamed(swarm, name).filter(Board.isLive);
         if (targets.length === 0) return yield* refuse(`No live member "${name}".`);
         for (const target of targets) {
@@ -1737,6 +1800,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
           target.killedAt = yield* nowIso;
           parked.delete(target.threadId);
           rungSeq.delete(target.threadId);
+          consecutiveWaitTimeouts.delete(target.threadId);
           yield* appendOrRefuse(swarm, {
             from: caller.name,
             text: removed ? `killed ${target.name} (worktree removed)` : `killed ${target.name}`,
@@ -1762,6 +1826,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
   const setModel: AgySwarmShape["setModel"] = (callerThreadId, input) =>
     withExistingSwarmLock(callerThreadId, ({ swarm, member: caller }) =>
       Effect.gen(function* () {
+        consecutiveWaitTimeouts.delete(caller.threadId);
         const targetName = input.name ?? caller.name;
         const target = Board.memberByName(swarm, targetName);
         if (target === undefined || !Board.isLive(target))
@@ -1851,6 +1916,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
   const setPlan: AgySwarmShape["setPlan"] = (callerThreadId, input) =>
     withEnsuredSwarmLock(callerThreadId, ({ swarm, member }) =>
       Effect.gen(function* () {
+        consecutiveWaitTimeouts.delete(member.threadId);
         if (!Board.canManageSwarm(member)) {
           return yield* refuse("Only the coordinator or a delegated manager sets the overview.");
         }
@@ -1886,6 +1952,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
   const channel: AgySwarmShape["channel"] = (callerThreadId, input) =>
     withEnsuredSwarmLock(callerThreadId, ({ swarm, member: caller }) =>
       Effect.gen(function* () {
+        consecutiveWaitTimeouts.delete(caller.threadId);
         if (input.op === "list") {
           return swarm.channels
             .map((item) => {
@@ -1945,6 +2012,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
   const post: AgySwarmShape["post"] = (callerThreadId, input) =>
     withEnsuredSwarmLock(callerThreadId, ({ swarm, member }) =>
       Effect.gen(function* () {
+        consecutiveWaitTimeouts.delete(member.threadId);
         if (member.killedAt !== null) return yield* refuse("You were removed from this swarm.");
         const created = yield* appendAndDeliver(swarm, {
           from: member.name,
@@ -2037,6 +2105,11 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
             ? Board.wakeTargets({ ...swarm, members: [member] }, candidate).length > 0
             : Board.visibleTo(member, candidate) && Board.isReadableByDefault(member, candidate)),
       );
+    if (relevant().length === 0 && (consecutiveWaitTimeouts.get(member.threadId) ?? 0) >= 1) {
+      return yield* refuse(
+        "Already timed out waiting for board posts in this turn. End your turn now instead of looping swarm_wait; you sleep for free and wake automatically when mentioned.",
+      );
+    }
     const subscription = yield* PubSub.subscribe(changed);
     yield* withSwarmLock(
       swarm.id,
@@ -2087,13 +2160,26 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
         ),
       ),
     );
+    if (posts.length > 0 || !timedOut) {
+      consecutiveWaitTimeouts.delete(member.threadId);
+    } else {
+      consecutiveWaitTimeouts.set(
+        member.threadId,
+        (consecutiveWaitTimeouts.get(member.threadId) ?? 0) + 1,
+      );
+    }
     const last = posts.at(-1)?.seq;
     const more =
       truncated && last !== undefined
         ? `\n\n(More posts after #${last}, left out to keep this result small: ${mentionsOnly ? `swarm_wait{since:${last}, timeout:1}` : `read_board{since:${last}}`})`
         : "";
     return {
-      posts: posts.length === 0 ? "(nothing yet)" : posts.map(Board.formatPost).join("\n") + more,
+      posts:
+        posts.length > 0
+          ? posts.map(Board.formatPost).join("\n") + more
+          : timedOut
+            ? "(nothing yet: timed out. Do NOT call swarm_wait again in a loop; end your turn now to sleep for free and wake automatically when mentioned.)"
+            : "(nothing yet)",
       head: Board.head(swarm),
       timedOut,
     };
@@ -2522,6 +2608,7 @@ const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
         const notifyWarmup = releaseWarmupSignal(event.threadId);
         const swarmId = byThread.get(event.threadId);
         if (swarmId === undefined || event.type !== "run.updated") return notifyWarmup;
+        consecutiveWaitTimeouts.delete(event.threadId);
         return notifyWarmup.pipe(
           Effect.andThen(
             withSwarmLock(

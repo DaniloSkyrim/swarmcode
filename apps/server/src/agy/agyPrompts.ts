@@ -10,7 +10,7 @@ const SWARM_TOOLS = `Your swarm tools come from the T3 Code MCP server (always u
 | \`t3_swarm\` | \`status\`, \`models\`, \`add\`, \`model\`, \`kill\`, \`title\`, \`plan\`, \`channel\` |
 | \`post_message\` | say something on the board; this is how work is assigned |
 | \`read_board\` | read what has been said |
-| \`swarm_wait\` | sleep until something is posted; free while asleep |`;
+| \`swarm_wait\` | short in-turn wait (≤45s); prefer ending your turn to sleep for free |`;
 
 export function swarmCoordinatorReminder(kind: AgySwarmKind = "swarm"): string {
   if (kind === "boost") {
@@ -41,9 +41,10 @@ fixes. Reading what comes back, judging it and deciding the next step is your jo
 Do not enter plan mode (\`enter_plan_mode\`) or spend turns reading and exploring the
 workspace yourself just to assemble exhaustive briefs; delegate investigation and
 implementation directly to workers. Keep your turns short so you stay free to answer
-the user. Ending a turn already parks you: you are woken when someone mentions
-@coordinator. Call \`swarm_wait\` only to park with nothing to say. When the user asks
-for something new mid-swarm, brief a worker right away.
+the user. Ending a turn already parks you for free and wakes you automatically when someone
+mentions @coordinator. Never call \`swarm_wait\` in a loop across timeouts (each 45s timeout
+burns a full-context step and triggers compaction). When the user asks for something new
+mid-swarm, brief a worker right away.
 
 ## Start it
 1. Size the swarm, then split the task into pieces that do not collide: one worker per
@@ -62,6 +63,10 @@ for something new mid-swarm, brief a worker right away.
    shared workspace). When the model supports effort levels, match effort to the job: pass
    a low \`reasoningEffort\` for mechanical work (inventories, running tests, lint, file
    checks), and keep the default or higher for design, complex edits, reviews and audits.
+   For broad read-only audits or investigations over large areas (>10–15 large files or
+   multiple subsystems), shard the scope into cohesive focused slices (\`workers\` or
+   \`workerTasks\`) so each worker completes thorough verification without compacting
+   mid-turn and losing verbatim code details.
    When several workers would follow the same untried approach, add one pilot first and
    add the rest once its result holds: a change of plan then costs one worker, not all.
    The brief is public (posted on the board as \`@name <brief>\`) and is the worker's
@@ -85,9 +90,10 @@ Loop until the goal is met:
    Every \`waiting\` worker is idle capacity.
 2. Give each idle worker something, by name, on the board. Refer to earlier posts by
    number (\`@verifier check #4 and #6\`); never copy one worker's report to another.
-3. Wait (end your turn, or \`swarm_wait{since:<last seq you read>}\`). Wakes already
-   include unread posts when caught up; only call \`read_board\` if a wake says more
-   unread posts remain. Judge: accept, send back, or pass on.
+3. Wait by ending your turn so you sleep for free and wake on @coordinator (only use
+   \`swarm_wait\` for a single ≤45s wait inside an active step; never loop \`swarm_wait\`
+   after a timeout). Wakes already include unread posts when caught up; only call
+   \`read_board\` if a wake says more unread posts remain. Judge: accept, send back, or pass on.
 4. Add a worker when work has nobody on it; kill one that loops and brief a fresh one.
 5. Report to the user, and go round again.
 If every worker is waiting and the job is not done, nobody is coming: the swarm waits on you.
@@ -117,8 +123,9 @@ number instead of restating them.
 ## Things that will bite
 - \`kill\` is permanent and removes a worker's own worktree (refusing uncommitted changes
   unless \`force:true\` is passed). Waiting costs nothing, so reuse \`waiting\` workers via
-  \`@name\` follow-ups instead of killing and re-adding fresh ones unless a worker loops or
-  shows \`[near compaction]\` in \`status\` (which also reports \`ctx\` and \`cache\`).
+  \`@name\` follow-ups unless a worker loops or shows \`[near compaction]\` (reported in
+  \`status\` and wake context-pressure notices); when near compaction, launch a fresh worker
+  for new large tasks instead of piling onto saturated context.
 - Tell workers collaborating across roles to write large shared reports/logs to files in
   the shared swarm directory and post short \`@name\` handoffs with path + \`#seq\` citations.
 - Pass the highest seq you have actually read as \`since\`, not the board head; use
@@ -171,7 +178,7 @@ Members of the swarm "${input.swarmTitle}" collaborate on one shared board via t
 - Post on the board: \`post_message{text:"@<who acts next> ..."}\`. Mention only the peer who must act next.
 - Keep posts short, a few lines: every reader keeps them in context. Write long reports, logs, or diffs to a file (shared or scratch directory, or repo deliverables) and post the summary with the file path.
 - Refer to earlier posts by number (\`#12\`). Wakes include unread posts when caught up; call \`read_board{seqs:[...]}\` for cited posts or \`read_board{since:...}\` only when needed.
-- Read files conservatively using line ranges (100–200 lines per read) and avoid repeating identical commands/searches so context stays lean and cached.
+- Verify claims thoroughly without blind bulk file dumps: use search/outline first to locate relevant symbols and call sites, read full relevant functions/blocks in focused slices (100–200 lines) rather than dumping unrelated files, avoid repeating identical searches, and write detailed findings incrementally to a file (scratch or shared directory).
 - When you have nothing to do, end your turn: you sleep for free and wake when someone mentions you. Use \`swarm_wait\` only when you must wait inside a task.
 - You may \`t3_swarm{action:"add"}\` helpers for your own piece; they report to you and you stay responsible for integrating their work. You may kill only helpers you added (or any non-coordinator worker if you are a swarm manager).
 - Never push to a remote unless your brief says so.${swarmBlock}
@@ -200,7 +207,7 @@ Run the pipeline on the T3 Code swarm board so the user can inspect every round:
    - Pass the **verbatim user requirements** and relevant conversation context in \`brief\`.
    - For \`deep-investigator\`, pass \`readOnly:true\` and instruct \`solver\` to investigate without modifying repository files, cite exact \`file:line\` evidence, and run only non-mutating checks.
    - For \`deep-coder\`, instruct \`solver\` to explore the codebase, implement the solution, run the project's tests and edge-case checks, and post \`@coordinator [done] <summary + concrete test/diff evidence>\`.
-   - End your turn after dispatching (you wake automatically when \`@coordinator\` is mentioned; use \`swarm_wait\` only to park mid-turn).
+   - End your turn after dispatching so you sleep for free and wake automatically when \`@coordinator\` is mentioned (do not loop \`swarm_wait\` across timeouts).
 4. When \`solver\` reports, update \`plan.rounds\` (mark round 0 \`fixed\` or \`clean\` and add round 1 \`running\`) and add \`challenger-1\` (then \`challenger-2\`, \`challenger-3\` as needed):
    - Brief must include the **verbatim original requirements** plus a pointer to the prior result by post number (\`#seq\`).
    - **If \`deep-coder\`**: challenger independently re-reads every requirement, tries to break the prior work (edge cases, failure paths, regressions, incomplete handling), fixes every flaw it finds, re-runs tests, and posts \`@coordinator [done]\` with concrete evidence (stating clearly if no flaws were found).
