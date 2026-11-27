@@ -38,6 +38,7 @@ import { cn } from "../../lib/cn";
 import { agySwarmEnvironment, useAgySwarm } from "../../state/agySwarm";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
+import { SwarmcodeBeeIcon } from "./SwarmcodeBeeIcon";
 
 type SwarmTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 type SwarmTab = "overview" | "board" | "members";
@@ -926,11 +927,7 @@ function MobileSwarmOverview(props: {
         <View className="items-center gap-4 rounded-2xl border border-border bg-subtle/60 px-4 py-5">
           <View className="flex-row items-center gap-3">
             <View className="size-12 items-center justify-center rounded-xl border border-border bg-warning">
-              <SymbolView
-                name="point.3.connected.trianglepath.dotted"
-                size={22}
-                tintColorClassName="accent-warning-foreground"
-              />
+              <SwarmcodeBeeIcon size={26} />
             </View>
             <SymbolView name="arrow.right" size={14} tintColorClassName="accent-foreground-muted" />
             <View className="flex-row items-center gap-1.5">
@@ -1075,11 +1072,7 @@ function MobileSwarmOverview(props: {
             className="flex-row items-center gap-3 rounded-2xl border border-border bg-subtle/70 p-3 active:opacity-80"
           >
             <View className="relative size-14 items-center justify-center rounded-xl border border-border bg-warning">
-              <SymbolView
-                name="point.3.connected.trianglepath.dotted"
-                size={24}
-                tintColorClassName="accent-warning-foreground"
-              />
+              <SwarmcodeBeeIcon size={28} />
               {coordinatorSleeping ? (
                 <View className="absolute top-1 left-1">
                   <SymbolView name="moon" size={10} tintColorClassName="accent-foreground-muted" />

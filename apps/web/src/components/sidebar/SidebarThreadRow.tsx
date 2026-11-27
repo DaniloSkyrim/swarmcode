@@ -51,7 +51,6 @@ import {
   FolderGit2Icon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
-  NetworkIcon,
   PinIcon,
   PinOffIcon,
   ShieldQuestionIcon,
@@ -96,6 +95,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { SwarmcodeBeeIcon } from "../swarm/SwarmcodeMascotBee";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
@@ -592,7 +592,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
-  swarming: NetworkIcon,
+  swarming: SwarmcodeBeeIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
   request: UserRoundIcon,

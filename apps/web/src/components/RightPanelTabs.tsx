@@ -56,7 +56,6 @@ import {
   Files,
   Globe2,
   MessagesSquare,
-  Network,
   Plus,
   TerminalSquare,
   Volume2Icon,
@@ -89,6 +88,7 @@ import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
+import { SwarmcodeBeeIcon } from "~/components/swarm/SwarmcodeMascotBee";
 import { Kbd } from "~/components/ui/kbd";
 import {
   Menu,
@@ -444,7 +444,7 @@ function RightPanelEmptyState(props: {
           {
             label: msg("Swarm"),
             description: msg("Watch agents talk on a shared board."),
-            icon: Network,
+            icon: SwarmcodeBeeIcon,
             shortcut: "W",
             available: props.swarmAvailable === true,
             disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.swarm),
@@ -756,7 +756,7 @@ function SurfaceIcon({
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "swarm":
-      return <Network className="size-3 shrink-0" />;
+      return <SwarmcodeBeeIcon className="size-3.5 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "thread":
@@ -1354,7 +1354,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
       ? [
           {
             label: msg("Swarm"),
-            icon: Network,
+            icon: SwarmcodeBeeIcon,
             shortcut: "W",
             available: props.swarmAvailable === true,
             disabledReason: messages(SURFACE_DISABLED_REASONS.swarm),

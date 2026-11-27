@@ -2,7 +2,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { NetworkIcon } from "lucide-react";
 import { T, useGT, Var } from "gt-react";
 import { useId } from "react";
 
@@ -20,6 +19,7 @@ import {
 import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { openSwarmSurface } from "./openSwarmSurface";
+import { SwarmcodeBeeIcon } from "./SwarmcodeMascotBee";
 import { needsInputMembers } from "./swarmBoard.logic";
 
 /** Shown only while the thread coordinates or works in a swarm. */
@@ -48,7 +48,7 @@ export function ThreadSwarmSection(props: {
             useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", false);
           }}
         >
-          <NetworkIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+          <SwarmcodeBeeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
           <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
             {swarm.title.trim() === "" ? <T>Swarm board</T> : swarm.title}
           </span>

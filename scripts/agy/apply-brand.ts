@@ -17,7 +17,12 @@ const rebrand = (text: string) => text.replaceAll("T3 Code", NAME);
 
 // UI copy that names the app. These files hold identifiers instead (legacy profile names,
 // the CLI shim marker), so they keep the upstream name.
-const COPY_ROOTS = ["apps/web/src", "apps/desktop/src", "packages/client-runtime/src"];
+const COPY_ROOTS = [
+  "apps/web/src",
+  "apps/desktop/src",
+  "apps/mobile/src",
+  "packages/client-runtime/src",
+];
 const COPY_KEEP = new Set([
   "apps/desktop/src/app/DesktopUserData.ts",
   "apps/desktop/src/app/DesktopLegacyLocalStorage.ts",
@@ -28,6 +33,7 @@ const COPY_KEEP = new Set([
 const CATALOGS = [
   { app: "apps/web", generator: ["node_modules/gt/bin/main.js", "generate"] },
   { app: "apps/desktop", generator: ["scripts/i18n-generate.mjs"] },
+  { app: "apps/mobile", generator: ["node_modules/gt/bin/main.js", "generate"] },
 ];
 const Catalog = Schema.Record(Schema.String, Schema.Unknown);
 const decodeCatalog = Schema.decodeUnknownEffect(Schema.fromJsonString(Catalog));
@@ -47,6 +53,19 @@ export function T3Wordmark(props: SVGProps<SVGSVGElement>) {
 }
 `;
 
+const MOBILE_WORDMARK_FILE = "apps/mobile/src/components/T3Wordmark.tsx";
+const MOBILE_BEE_MARK = `import type { ColorValue } from "react";
+import { SwarmcodeBeeIcon } from "../features/threads/SwarmcodeBeeIcon";
+
+export function T3Wordmark(props: {
+  readonly height: number;
+  readonly color?: ColorValue;
+  readonly colorClassName?: string;
+}) {
+  return <SwarmcodeBeeIcon size={Math.round(props.height * 1.25)} />;
+}
+`;
+
 const ICONS: ReadonlyArray<readonly [source: string, targets: ReadonlyArray<string>]> = [
   [
     "swarmcode-1024.png",
@@ -55,6 +74,9 @@ const ICONS: ReadonlyArray<readonly [source: string, targets: ReadonlyArray<stri
       "assets/nightly/nightly-universal-1024.png",
       "assets/prod/black-macos-1024.png",
       "assets/prod/black-universal-1024.png",
+      "apps/mobile/assets/android-icon-foreground.png",
+      "apps/mobile/assets/android-splash-icon-prod.png",
+      "apps/mobile/assets/android-splash-icon-nightly.png",
     ],
   ],
   [
@@ -214,12 +236,31 @@ const edits = (
   {
     file: "apps/web/src/components/sidebar/SidebarChrome.tsx",
     replace: [
-      [`import { T3Wordmark } from "../T3Wordmark";`, `import { T3AppIcon } from "../T3AppIcon";`],
       [
-        `<T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />`,
-        `<T3AppIcon className="size-4 shrink-0 self-center rounded-[4px]" />`,
+        `import { T3Wordmark } from "../T3Wordmark";`,
+        `import { SwarmcodeBrandMark } from "../swarm/SwarmcodeBrandMark";`,
       ],
-      [`{"Code"}`, `{"${NAME}"}`],
+      [
+        `function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
+      <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+      <span
+        className={cn(
+          "truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
+          onBackdrop ? "text-white/70" : "text-muted-foreground",
+        )}
+      >
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- product wordmark */}
+        {"Code"}
+      </span>
+    </span>
+  );
+}`,
+        `function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  return <SwarmcodeBrandMark onBackdrop={onBackdrop} />;
+}`,
+      ],
     ],
   },
   {
@@ -230,6 +271,46 @@ const edits = (
         `<span className="text-lg font-medium tracking-tight">${NAME}</span>`,
       ],
     ],
+  },
+  {
+    file: "apps/mobile/app.config.ts",
+    replace: [
+      [`androidAdaptiveBackgroundColor: "#000000",`, `androidAdaptiveBackgroundColor: "#1a1033",`],
+      [`appName: "T3 Code Dev",`, `appName: "${NAME} Dev",`],
+      [`scheme: "t3code-dev",`, `scheme: "swarmcode-dev",`],
+      [`androidPackage: "com.t3tools.t3code.dev",`, `androidPackage: "${APP_ID}.dev",`],
+      [`appName: "T3 Code Preview",`, `appName: "${NAME} Preview",`],
+      [`scheme: "t3code-preview",`, `scheme: "swarmcode-preview",`],
+      [`androidPackage: "com.t3tools.t3code.preview",`, `androidPackage: "${APP_ID}.preview",`],
+      [`appName: "T3 Code",`, `appName: "${NAME}",`],
+      [`scheme: "t3code",`, `scheme: "swarmcode",`],
+      [`androidPackage: "com.t3tools.t3code",`, `androidPackage: "${APP_ID}",`],
+      [`slug: "t3-code",`, `slug: "swarmcode",`],
+      [
+        `package: variant.androidPackage,`,
+        `package: variant.androidPackage,\n    ...(process.env.T3CODE_ANDROID_VERSION_CODE ? { versionCode: Number(process.env.T3CODE_ANDROID_VERSION_CODE) } : {}),`,
+      ],
+      [
+        `description: "Subscription quotas from your connected T3 Code environments.",`,
+        `description: "Subscription quotas from your connected ${NAME} environments.",`,
+      ],
+      [
+        `description: "Shows the current state of active T3 Code agents.",`,
+        `description: "Shows the current state of active ${NAME} agents.",`,
+      ],
+      [
+        `microphonePermission: "Allow T3 Code to use your microphone for voice input.",`,
+        `microphonePermission: "Allow ${NAME} to use your microphone for voice input.",`,
+      ],
+      [
+        `cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",`,
+        `cameraPermission: "Allow ${NAME} to access your camera so you can scan pairing QR codes.",`,
+      ],
+    ],
+  },
+  {
+    file: "apps/mobile/src/components/CompactBrandTitle.tsx",
+    replace: [[`const WORDMARK_SUFFIX = "Code";`, `const WORDMARK_SUFFIX = "${NAME}";`]],
   },
 ];
 
@@ -277,12 +358,18 @@ const applyBrand = Effect.fn("applyBrand")(function* (checkOnly: boolean) {
   if (wordmark._tag === "None" || !wordmark.value.includes("export function T3Wordmark(")) {
     problems.push(`${WORDMARK_FILE} no longer exports T3Wordmark`);
   }
+  const mobileWordmark = yield* fs
+    .readFileString(path.join(root, MOBILE_WORDMARK_FILE))
+    .pipe(Effect.option);
+  if (
+    mobileWordmark._tag === "None" ||
+    !mobileWordmark.value.includes("export function T3Wordmark(")
+  ) {
+    problems.push(`${MOBILE_WORDMARK_FILE} no longer exports T3Wordmark`);
+  }
   for (const file of [
     ...COPY_ROOTS,
-    ...CATALOGS.flatMap(({ app, generator }) => [
-      `${app}/src/i18n/translations/en.json`,
-      `${app}/${generator[0]}`,
-    ]),
+    ...CATALOGS.map(({ app }) => `${app}/src/i18n/translations/en.json`),
   ]) {
     if (!(yield* fs.exists(path.join(root, file)))) problems.push(`missing: ${file}`);
   }
@@ -312,6 +399,7 @@ const applyBrand = Effect.fn("applyBrand")(function* (checkOnly: boolean) {
     }
   }
   yield* fs.writeFileString(path.join(root, WORDMARK_FILE), BEE_MARK);
+  yield* fs.writeFileString(path.join(root, MOBILE_WORDMARK_FILE), MOBILE_BEE_MARK);
 
   let copyFiles = 0;
   for (const dir of COPY_ROOTS) {
@@ -336,6 +424,11 @@ const applyBrand = Effect.fn("applyBrand")(function* (checkOnly: boolean) {
   let carried = 0;
   let untranslated = 0;
   for (const { app, generator } of CATALOGS) {
+    // Filtered CI jobs only install the workspace they build (desktop/web vs mobile).
+    if (!(yield* fs.exists(path.join(root, app, generator[0])))) {
+      yield* Effect.log(`Skipping ${app} i18n generator (workspace dependencies not installed).`);
+      continue;
+    }
     const exitCode = yield* spawner
       .spawn(
         ChildProcess.make("node", generator, {

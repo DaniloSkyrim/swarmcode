@@ -51,7 +51,10 @@ If a hook line is gone, re-add it from `hooks.json` (or from `git log -p` on the
 
 ## Releases and versioning
 
-`.github/workflows/agy-release.yml` runs on pushes to `agy`, after a successful sync, or by hand (with a `force` option) and skips commits that already have a release. It builds an unsigned Windows NSIS installer on Linux the way upstream does (`cargo xwin` for the resource monitor, `vp run build:desktop:bundle`, then `build-desktop-artifact.ts --platform win --target nsis --arch x64 --skip-build`) and publishes a prerelease with the installer, blockmap and `nightly.yml`. Do not move it to a Windows runner: a Windows host also writes a server compile cache into the payload, which exceeds its file limit.
+`.github/workflows/agy-release.yml` runs on pushes to `agy`, after a successful sync, or by hand (with `force` and `skip_android` options) and skips commits that already have a release. In parallel on `ubuntu-latest`, it builds:
+
+- An unsigned Windows NSIS installer (`cargo xwin` for the resource monitor, `vp run build:desktop:bundle`, then `build-desktop-artifact.ts --platform win --target nsis --arch x64 --skip-build`) plus its blockmap and `nightly.yml`. Do not move it to a Windows runner: a Windows host also writes a server compile cache into the payload, which exceeds its file limit.
+- A standalone Android arm64 APK (`Swarmcode-<version>-android-arm64.apk`, package `io.github.daniloskyrim.swarmcode`, `T3CODE_MOBILE_UPDATES_ENABLED=0` so upstream Expo OTA updates never overwrite the fork) built via `expo prebuild --clean --platform android` and Gradle `:app:assembleRelease`.
 
 The version is `<upstream base>-nightly.<YYYYMMDD>.<N>`, from `scripts/resolve-nightly-release.ts`. The base is the next patch after `apps/desktop/package.json`, as for upstream nightlies. `N` is `100000 + the fork's run number`, far above upstream's own run numbers (a few thousand), so the fork build sorts after any upstream nightly from the same day and after the fork's earlier builds. Revisit the offset if upstream's run numbers approach 100000.
 
@@ -61,10 +64,10 @@ The version is `<upstream base>-nightly.<YYYYMMDD>.<N>`, from `scripts/resolve-n
 
 [TRADEMARK.md](../TRADEMARK.md) requires a published fork to replace T3 Code's name, wordmark and icons and to say it is unofficial. The source stays upstream's so merges stay clean; `scripts/agy/apply-brand.ts` rebrands only the release checkout, right before the build:
 
-- Product name `Swarmcode (Nightly)`, app id `io.github.daniloskyrim.swarmcode`, installer `Swarmcode-<version>-x64.exe`, and the startup-recovery releases link pointing at this repository.
-- The bee icons in `scripts/agy/brand/` over every file in `assets/nightly`, `assets/prod` and `apps/web/public`, a bee mark in place of the `T3Wordmark` artwork, and the sidebar and page titles.
+- Product name `Swarmcode (Nightly)`, app id / Android package `io.github.daniloskyrim.swarmcode`, installer `Swarmcode-<version>-x64.exe`, Android APK `Swarmcode-<version>-android-arm64.apk`, and the startup-recovery releases link pointing at this repository.
+- The bee icons in `scripts/agy/brand/` over `assets/nightly`, `assets/prod`, `apps/web/public`, and the mobile Android launcher/splash assets, a bee mark in place of the web and mobile `T3Wordmark` artwork, the custom `SwarmcodeBrandMark` in the sidebar header, and the page titles.
 - The update channel is pinned to nightly in `DesktopUpdates.ts`, since the fork publishes nothing else and `desktop-settings.json` is shared with the official app, leaving the official app's saved channel untouched.
-- "T3 Code" becomes "Swarmcode" in web, desktop and client-runtime copy. Catalog keys hash the English text, so the script runs each app's `gt generate` and carries every existing translation over to its new key.
+- "T3 Code" becomes "Swarmcode" in web, desktop, mobile and client-runtime copy. Catalog keys hash the English text, so the script runs each installed app's `gt generate` and carries every existing translation over to its new key.
 
 `--check` only verifies that each spot still exists; the sync runs it, so an upstream change that moves one fails the sync instead of the next release. When it fails, update the strings in `apply-brand.ts`. Never commit the script's output.
 

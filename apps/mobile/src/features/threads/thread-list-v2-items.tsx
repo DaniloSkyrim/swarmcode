@@ -97,6 +97,7 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { SwarmcodeBeeIcon } from "./SwarmcodeBeeIcon";
 
 interface StatusLabel {
   // Null when the icon and timer carry the status on their own.
@@ -1465,17 +1466,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </Pressable>
           ) : statusLabel ? (
             <View className="flex-row items-center gap-1">
-              <SymbolView
-                name={statusLabel.icon}
-                size={13}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.iconTintClassName
-                    : statusLabel.iconTintClassName
-                }
-                type="monochrome"
-                weight="semibold"
-              />
+              {status === "swarming" ? (
+                <SwarmcodeBeeIcon size={14} />
+              ) : (
+                <SymbolView
+                  name={statusLabel.icon}
+                  size={13}
+                  tintColorClassName={
+                    selected
+                      ? selectedThreadRowColors.iconTintClassName
+                      : statusLabel.iconTintClassName
+                  }
+                  type="monochrome"
+                  weight="semibold"
+                />
+              )}
               <Text
                 className={cn(
                   "text-xs font-t3-bold",

@@ -79,7 +79,6 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
-  NetworkIcon,
   PinIcon,
   PinOffIcon,
   PlugIcon,
@@ -278,6 +277,7 @@ import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { jumpToNextNeedsInputMember, openSwarmSurface } from "./swarm/openSwarmSurface";
+import { SwarmcodeBeeIcon } from "./swarm/SwarmcodeMascotBee";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
@@ -1580,7 +1580,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:open-thread-swarm",
       searchTerms: ["swarm", "boost", "teamwork", "agents", "board", "members"],
       title: gt("Show swarm board"),
-      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      icon: <SwarmcodeBeeIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "swarm.toggle",
       run: async () => {
         openSwarmSurface(threadRef);
@@ -1591,7 +1591,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:swarm-jump-needs-input",
       searchTerms: ["swarm", "boost", "teamwork", "needs input", "jump", "approval", "member"],
       title: gt("Jump to swarm member needing input"),
-      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      icon: <SwarmcodeBeeIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "swarm.jumpNeedsInput",
       run: async () => {
         jumpToNextNeedsInputMember(threadRef, (target) => {

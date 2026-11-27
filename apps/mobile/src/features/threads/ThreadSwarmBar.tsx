@@ -9,6 +9,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { useAgySwarm } from "../../state/agySwarm";
+import { SwarmcodeBeeIcon } from "./SwarmcodeBeeIcon";
 
 /** Shown only while the thread coordinates or participates in a swarm. */
 export function ThreadSwarmBar(props: {
@@ -47,11 +48,7 @@ export function ThreadSwarmBar(props: {
         }}
         className="flex-row items-center gap-2 rounded-2xl bg-subtle px-3 py-2 active:opacity-70"
       >
-        <SymbolView
-          name="point.3.connected.trianglepath.dotted"
-          size={14}
-          tintColorClassName="accent-foreground-muted"
-        />
+        <SwarmcodeBeeIcon size={15} />
         {kindLabel ? (
           <View className="shrink-0 rounded-md bg-screen px-1.5 py-0.5">
             <Text className="text-[11px] font-t3-medium text-foreground-muted">{kindLabel}</Text>

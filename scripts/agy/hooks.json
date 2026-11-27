@@ -1,6 +1,7 @@
 {
   "forkFiles": [
     ".github/README.md",
+    "apps/mobile/src/features/threads/SwarmcodeBeeIcon.tsx",
     "apps/mobile/src/features/threads/ThreadSwarmBar.tsx",
     "apps/mobile/src/features/threads/ThreadSwarmSheet.tsx",
     "apps/mobile/src/features/threads/agy-slash-commands.ts",
@@ -34,6 +35,8 @@
     "apps/web/src/components/swarm/SwarmMemberModelControls.tsx",
     "apps/web/src/components/swarm/SwarmOverview.browser.test.tsx",
     "apps/web/src/components/swarm/SwarmPanel.tsx",
+    "apps/web/src/components/swarm/SwarmcodeBrandMark.browser.test.tsx",
+    "apps/web/src/components/swarm/SwarmcodeBrandMark.tsx",
     "apps/web/src/components/swarm/SwarmcodeMascotBee.tsx",
     "apps/web/src/components/swarm/ThreadSwarmSection.tsx",
     "apps/web/src/components/swarm/openSwarmSurface.ts",
@@ -147,7 +150,7 @@
     },
     {
       "file": "apps/web/src/components/RightPanelTabs.tsx",
-      "snippets": ["onAddSwarm"]
+      "snippets": ["onAddSwarm", "SwarmcodeBeeIcon"]
     },
     {
       "file": "packages/contracts/src/keybindings.ts",
@@ -171,7 +174,11 @@
     },
     {
       "file": "apps/web/src/components/CommandPalette.tsx",
-      "snippets": ["openSwarmSurface(threadRef)", "jumpToNextNeedsInputMember(threadRef,"]
+      "snippets": [
+        "openSwarmSurface(threadRef)",
+        "jumpToNextNeedsInputMember(threadRef,",
+        "SwarmcodeBeeIcon"
+      ]
     },
     {
       "file": "apps/web/src/components/settings/KeybindingsSettings.logic.ts",
@@ -287,7 +294,8 @@
       "file": "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
       "snippets": [
         "useActiveSwarmStartedAt(thread.environmentId, thread.id)",
-        ": upstreamTopStatus;"
+        ": upstreamTopStatus;",
+        "swarming: SwarmcodeBeeIcon,"
       ]
     },
     {
@@ -320,7 +328,8 @@
       "file": "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
       "snippets": [
         "useActiveSwarmStartedAt(thread.environmentId, thread.id)",
-        "msg(\"Swarming\", { $context: \"thread status\" })"
+        "msg(\"Swarming\", { $context: \"thread status\" })",
+        "<SwarmcodeBeeIcon size={14} />"
       ]
     },
     {

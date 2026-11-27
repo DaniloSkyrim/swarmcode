@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, SVGProps } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -84,6 +84,30 @@ export function SwarmcodeMascotBee(props: {
             <path key={fill} d={d} fill={fill} />
           ))}
         </g>
+      </g>
+    </svg>
+  );
+}
+
+/** Square UI icon version of the official Swarmcode bee for tabs, badges, and menus. */
+export function SwarmcodeBeeIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="2 0 29 29"
+      overflow="visible"
+      className={cn("shrink-0 select-none", className)}
+      {...props}
+    >
+      <g>
+        {BEE_BODY_LAYERS.map(([fill, d]) => (
+          <path key={fill} d={d} fill={fill} />
+        ))}
+      </g>
+      <g>
+        {BEE_WING_LAYERS.map(([fill, d]) => (
+          <path key={fill} d={d} fill={fill} />
+        ))}
       </g>
     </svg>
   );

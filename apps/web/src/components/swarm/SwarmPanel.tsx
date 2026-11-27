@@ -8,7 +8,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, NetworkIcon, UserPlusIcon } from "lucide-react";
+import { CheckIcon, UserPlusIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type KeyboardEvent, useId, useState } from "react";
 
@@ -28,6 +28,7 @@ import { SwarmBoard } from "./SwarmBoard";
 import { SwarmGraph } from "./SwarmGraph";
 import { SwarmMembers } from "./SwarmMembers";
 import { SwarmOverview } from "./SwarmOverview";
+import { SwarmcodeBeeIcon } from "./SwarmcodeMascotBee";
 import {
   boostRoundProgress,
   formatTokenCount,
@@ -178,7 +179,7 @@ export function SwarmPanel(props: { threadRef: ScopedThreadRef; environmentId: E
       <Empty size="compact">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <NetworkIcon />
+            <SwarmcodeBeeIcon />
           </EmptyMedia>
           <EmptyTitle>
             {error === null ? gt("No swarm in this conversation") : gt("Couldn't load the swarm")}
