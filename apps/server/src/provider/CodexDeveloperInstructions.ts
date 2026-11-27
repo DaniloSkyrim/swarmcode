@@ -5,7 +5,7 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_SECTIONS,
+  t3CodeOrchestrationSections,
   T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
@@ -15,6 +15,7 @@ export const CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES = 4_000;
 export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
+  readonly nativeSubagents?: boolean;
 }
 
 const normalizeAvailability = (
@@ -23,15 +24,13 @@ const normalizeAvailability = (
   typeof availability === "boolean" ? { browser: availability, device: false } : availability;
 
 /** Instructions for unavailable tools would steer the model away from its remaining automation. */
-const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
-  const tools = normalizeAvailability(availability);
-  return [
+const toolInstructions = (tools: T3CodeToolAvailability): string =>
+  [
     tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
     tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
   ]
     .filter(Boolean)
     .join("\n\n");
-};
 
 export interface CodexRuntimeInfo {
   readonly agentFeedback?: AgentFeedbackMode;
@@ -52,7 +51,7 @@ export function buildCodexAdditionalContext(
   );
   const orchestrationSections = isSwarmMember
     ? [T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS]
-    : T3_CODE_ORCHESTRATION_SECTIONS;
+    : t3CodeOrchestrationSections(availability.nativeSubagents);
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(

@@ -2,12 +2,16 @@ import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { McpToolExposureMode } from "./mcpSession.ts";
 
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
-export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
+export const t3CodeOrchestrationSections = (nativeSubagents = true): ReadonlyArray<string> => [
   `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.
 
-- Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked.
+- ${
+    nativeSubagents
+      ? `Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`.`
+      : `Use \`delegate_task\` for subagents, including when the child uses your provider and model. Set \`isolation:"worktree"\` for a separate checkout.`
+  } Workflow only when asked.
 - Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
 - Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
 - Follow a running delegate's \`next\`. Don't poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
@@ -27,7 +31,7 @@ Ordinary coding tasks need no T3 tools.
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
-${T3_CODE_ORCHESTRATION_SECTIONS.join("\n\n")}
+${t3CodeOrchestrationSections().join("\n\n")}
 `;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
@@ -56,21 +60,12 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
   ` Load them with ToolSearch \`select:${T3_CODE_DEVICE_TOOLS.map((tool) => `mcp__t3-code__${tool}`).join(",")}\`.`,
 );
 
+const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
+  "Deferred T3 tools: only core orchestration tools, `tool_search`, and `tool_call` are declared directly. For any T3 tool not declared directly (including `delegate_task` if omitted, or optional tools like `preview_*`, `device_*`, `html_preview`, `html_render`, `t3_thread_*`, `t3_project_*`, `t3_worktree_*`, pull requests, `schedule_task`, `request_secret`, etc.), call `tool_search` to get its schema and `tool_call({ name, arguments })` to run it.";
+
 // ACP only: some ACP agents accept the injected MCP server but never expose
 // its tools, so they need the terminal transport other harnesses never use.
 const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
-
-const T3_CODE_ACP_PROXY_TOOL_INSTRUCTIONS = `## T3 Code tool discovery (\`tool_search\` + \`t3_call\`)
-
-Core orchestration and swarm tools (\`orchestrator_capabilities\`, \`delegate_task\`, \`task_status\`, \`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`) are directly listed as MCP tools. All other T3 Code tools (\`preview_*\`, \`pull_request_*\`, \`ci_*\`, \`t3_thread_*\`, \`t3_project_*\`, \`t3_worktree_*\`, \`html_preview\`/\`html_render\`, \`schedule_task\`, \`device_*\`, \`request_secret\`, \`send_to_user\`, issues, themes, attachments, queues, environment links) are accessed through \`tool_search\` and \`t3_call\`:
-1. Call \`tool_search({ query })\` to find the tool and read its exact \`inputSchema\`.
-2. Invoke it immediately in the same turn with \`t3_call({ tool: "<name>", arguments: { ... } })\`.
-Never call unlisted T3 Code tool names directly and never fall back to shell MCP commands while \`tool_search\` and \`t3_call\` are available.`;
-
-const T3_CODE_PROXY_ORCHESTRATION_INSTRUCTIONS = T3_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
-  "\n- T3 tools may load late. Try the name once before you call it absent.",
-  "",
-);
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
 
@@ -82,7 +77,7 @@ Investigate with read-only actions and do not edit files or otherwise execute th
 
 const T3_CODE_ACP_SWARM_PROXY_INSTRUCTIONS = `## T3 Code tools
 
-Swarm tools (\`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`) are directly listed as MCP tools. Access any other needed T3 tool via \`tool_search\` then \`t3_call\`; never fall back to shell MCP commands while they exist.`;
+Swarm tools (\`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`) are directly listed as MCP tools. Access any other needed T3 tool via \`tool_search\` then \`tool_call({ name, arguments })\`; never fall back to shell MCP commands while they exist.`;
 
 export const T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS = `## T3 Code swarm worker
 
@@ -94,7 +89,7 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
-  readonly mcpToolExposure?: McpToolExposureMode;
+  readonly toolExposure?: McpToolExposureMode | undefined;
   readonly isSwarmMember?: boolean;
 }
 
@@ -110,12 +105,12 @@ export function t3AcpPromptWithInstructions(input: {
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
     input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
-    input.previousState.mcpToolExposure === input.state.mcpToolExposure &&
+    input.previousState.toolExposure === input.state.toolExposure &&
     (input.previousState.isSwarmMember === true) === (input.state.isSwarmMember === true)
   ) {
     return input.prompt;
   }
-  const isProxy = input.state.mcpToolExposure === "proxy";
+  const isProxy = input.state.toolExposure === "deferred-proxy";
   const isSwarmMember = input.state.isSwarmMember === true;
   const instructions = [
     input.state.interactionMode === "plan"
@@ -130,14 +125,11 @@ export function t3AcpPromptWithInstructions(input: {
             ...(isProxy ? [] : [T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS]),
           ]
         : [
-            ...(isProxy ? [T3_CODE_ACP_PROXY_TOOL_INSTRUCTIONS] : []),
             T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
             ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-            (isProxy
-              ? T3_CODE_PROXY_ORCHESTRATION_INSTRUCTIONS
-              : T3_CODE_ORCHESTRATION_INSTRUCTIONS
-            ).trim(),
-            ...(isProxy ? [] : [T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS]),
+            T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+            ...(isProxy ? [T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS] : []),
+            T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
           ]
       : []),
   ];

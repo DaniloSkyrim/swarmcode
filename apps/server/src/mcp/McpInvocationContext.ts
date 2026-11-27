@@ -169,8 +169,8 @@ export interface McpInvocationScope {
   readonly origin?: string | undefined;
   /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
   readonly forge?: boolean;
-  /** Optional MCP tool exposure mode sent via `t3-tool-exposure` (`deferred` or `proxy`). */
-  readonly toolExposure?: McpToolExposureMode;
+  /** Set from `t3-tool-exposure` when an ACP client defers optional T3 MCP tools. */
+  readonly toolExposure?: McpToolExposureMode | undefined;
 }
 
 /**

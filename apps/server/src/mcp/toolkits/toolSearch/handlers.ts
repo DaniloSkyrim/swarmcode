@@ -8,12 +8,16 @@ import { ToolSearchToolkit } from "./tools.ts";
 export const layer = McpToolAccess.toLayer(ToolSearchToolkit, {
   tool_search: McpToolAccess.readsAsCaller(({ query }) =>
     Effect.gen(function* () {
-      const { thread, toolExposure } = yield* McpInvocationContext.McpInvocationContext.pipe(
-        Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "tool_search")),
+      const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
+        Effect.flatMap((current) =>
+          McpInvocationContext.requireThreadScope(current, "tool_search"),
+        ),
       );
       const exposure = yield* McpToolExposure.McpToolExposure;
       return {
-        tools: yield* exposure.search(thread.providerSessionId, query, toolExposure),
+        tools: yield* exposure.search(scope.thread.providerSessionId, query, {
+          mode: scope.toolExposure,
+        }),
       };
     }),
   ),

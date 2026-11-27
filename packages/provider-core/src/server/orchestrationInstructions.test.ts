@@ -96,16 +96,21 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+    const withProxy = t3AcpPromptWithInstructions({
+      prompt: "Render a chart.",
+      state: { ...state, toolExposure: "deferred-proxy" },
+    });
+    assert.include(withProxy, "including `delegate_task`");
+    assert.include(withProxy, "tool_call({ name, arguments })");
+    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "tool_call(");
   });
 
-  it("instructs proxy-mode ACP sessions to use tool_search + t3_call instead of shell fallback", () => {
+  it("instructs deferred-proxy ACP sessions to re-deliver instructions on exposure switch", () => {
     const base = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
-    const proxy = { ...base, mcpToolExposure: "proxy" as const };
+    const proxy = { ...base, toolExposure: "deferred-proxy" as const };
     const text = t3AcpPromptWithInstructions({ prompt: "Open preview.", state: proxy });
     assert.include(text, "tool_search");
-    assert.include(text, "t3_call");
-    assert.notInclude(text, "T3_ACP_MCP_CALL");
-    assert.notInclude(text, "Try the name once before you call it absent.");
+    assert.include(text, "tool_call");
 
     // Switching exposure mode triggers re-delivery; identical state skips.
     assert.equal(
@@ -114,7 +119,7 @@ describe("T3 device instructions", () => {
     );
     assert.include(
       t3AcpPromptWithInstructions({ prompt: "Next.", state: proxy, previousState: base }),
-      "t3_call",
+      "tool_call",
     );
   });
 
@@ -136,15 +141,15 @@ describe("T3 device instructions", () => {
 
     const regularProxy = t3AcpPromptWithInstructions({
       prompt: "Do work.",
-      state: { ...baseState, mcpToolExposure: "proxy" },
+      state: { ...baseState, toolExposure: "deferred-proxy" },
     });
     const swarmProxy = t3AcpPromptWithInstructions({
       prompt: "Do work.",
-      state: { ...baseState, mcpToolExposure: "proxy", isSwarmMember: true },
+      state: { ...baseState, toolExposure: "deferred-proxy", isSwarmMember: true },
     });
     assert.isBelow(swarmProxy.length, regularProxy.length);
     assert.include(swarmProxy, "tool_search");
-    assert.include(swarmProxy, "t3_call");
+    assert.include(swarmProxy, "tool_call");
     assert.notInclude(swarmProxy, "delegate_task");
 
     const regularPrompt = t3OrchestrationPrompt({

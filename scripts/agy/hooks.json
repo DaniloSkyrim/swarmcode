@@ -15,12 +15,11 @@
     "apps/server/src/agy/antigravityElicitation.ts",
     "apps/server/src/agy/antigravityOrchestratorModel.test.ts",
     "apps/server/src/agy/antigravityOrchestratorModel.ts",
-    "apps/server/src/agy/mcpT3Call.test.ts",
-    "apps/server/src/agy/mcpT3Call.ts",
     "apps/server/src/agy/swarm/AgySwarm.test.ts",
     "apps/server/src/agy/swarm/AgySwarm.ts",
     "apps/server/src/agy/swarm/swarmBoard.test.ts",
     "apps/server/src/agy/swarm/swarmBoard.ts",
+    "apps/server/src/agy/swarmToolExposure.test.ts",
     "apps/server/src/mcp/toolkits/swarm/handlers.ts",
     "apps/server/src/mcp/toolkits/swarm/tools.test.ts",
     "apps/server/src/mcp/toolkits/swarm/tools.ts",
@@ -128,19 +127,11 @@
     },
     {
       "file": "apps/server/src/mcp/McpHttpServer.ts",
-      "snippets": [
-        "layerMilestoneEvents, layerSwarmToolkit",
-        "T3Call.toolExposureField(request.headers[MCP_TOOL_EXPOSURE_HEADER])",
-        ").pipe(withDirectDispatch),",
-        "withToolAnalytics(withToolResultCapture(withToolSpans(register))).pipe(withDirectDispatch)",
-        "withToolSpans(registerT3Call())",
-        "const withDirectDispatch = Effect.fn(\"McpHttpServer.withDirectDispatch\")",
-        "const registerT3Call = Effect.fn(\"McpHttpServer.registerT3Call\")",
-        "inputSchema: tool.inputSchema as Record<string, unknown>,",
-        "mode !== \"deferred\" && mode !== \"proxy\"",
-        "target !== McpToolExposure.TOOL_SEARCH && target !== McpToolExposure.T3_CALL",
-        "exposure.isListed(providerSessionId, target, mode)"
-      ]
+      "snippets": ["layerMilestoneEvents, layerSwarmToolkit"]
+    },
+    {
+      "file": "apps/server/src/mcp/McpToolExposure.ts",
+      "snippets": ["\"t3_swarm\"", "\"post_message\"", "\"read_board\"", "\"swarm_wait\""]
     },
     {
       "file": "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",

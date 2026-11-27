@@ -442,6 +442,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
   tool_search: tool(["Search", "Searching", "Searched", "T3 Code tools"], null),
+  tool_call: tool(["Call", "Calling", "Called", "a T3 Code tool"], null),
   t3_call: tool(["Call", "Calling", "Called", "a T3 Code tool"], null),
   t3_swarm: tool(["Manage", "Managing", "Managed", "the swarm"], null),
   post_message: tool(["Post", "Posting", "Posted", "to the swarm board"], null),
@@ -525,17 +526,25 @@ const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefin
     ],
 };
 
-/** Unwraps a `t3_call({ tool, arguments })` proxy invocation into its inner T3 tool and arguments. */
+/** Unwraps a `tool_call({ name, arguments })` (or legacy `t3_call`) proxy invocation into its inner T3 tool and arguments. */
 export function unwrapT3McpProxyCall(
   toolName: string | null | undefined,
   input?: unknown,
 ): { readonly tool: string; readonly input: unknown } | null {
   const name = toolName == null ? null : resolveT3McpToolName(toolName);
-  if (name !== "t3_call") return null;
+  if (name !== "tool_call" && name !== "t3_call") return null;
   const fields = asSummaryInput(input);
-  if (typeof fields?.tool !== "string") return null;
-  const inner = resolveT3McpToolName(fields.tool);
-  if (inner === null || inner === "t3_call" || !Object.hasOwn(T3_MCP_TOOLS, inner)) return null;
+  const target = name === "tool_call" ? (fields?.name ?? fields?.tool) : fields?.tool;
+  if (typeof target !== "string") return null;
+  const inner = resolveT3McpToolName(target);
+  if (
+    inner === null ||
+    inner === "tool_call" ||
+    inner === "t3_call" ||
+    !Object.hasOwn(T3_MCP_TOOLS, inner)
+  ) {
+    return null;
+  }
   const rawArgs = fields.arguments;
   let innerInput: unknown = rawArgs;
   if (typeof rawArgs === "string") {
