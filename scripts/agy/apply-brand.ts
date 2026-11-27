@@ -425,7 +425,10 @@ const applyBrand = Effect.fn("applyBrand")(function* (checkOnly: boolean) {
   let untranslated = 0;
   for (const { app, generator } of CATALOGS) {
     // Filtered CI jobs only install the workspace they build (desktop/web vs mobile).
-    if (!(yield* fs.exists(path.join(root, app, generator[0])))) {
+    // Check node_modules/gt rather than generator[0] alone because apps/desktop's wrapper script is checked in.
+    const hasGt = yield* fs.exists(path.join(root, app, "node_modules/gt/package.json"));
+    const hasGenerator = yield* fs.exists(path.join(root, app, generator[0]));
+    if (!hasGt || !hasGenerator) {
       yield* Effect.log(`Skipping ${app} i18n generator (workspace dependencies not installed).`);
       continue;
     }
