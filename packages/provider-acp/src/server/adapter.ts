@@ -10023,6 +10023,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
             ...(mcpToolExposure === undefined ? {} : { mcpToolExposure }),
+            ...(turnInput.appThread.lineage.swarmMember === true ? { isSwarmMember: true } : {}),
           } satisfies T3AcpInstructionState;
           const userText =
             flavor.rewriteUserText === undefined

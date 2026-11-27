@@ -378,3 +378,126 @@ it("a capped page keeps the oldest posts that fit, and at least one", () => {
 it("a capped page of no posts is empty", () => {
   assert.deepStrictEqual(Board.takePostsWithinChars([], 100), []);
 });
+
+it("filters routine noise (other briefs and zero-mention system notices) from default reads and wakes", () => {
+  const swarm = swarmWith(["api", "ui"]);
+  const coordinator = Board.memberByName(swarm, Board.COORDINATOR)!;
+  const api = Board.memberByName(swarm, "api")!;
+  const ui = Board.memberByName(swarm, "ui")!;
+
+  const apiBrief = Board.appendPost(swarm, {
+    from: "coordinator",
+    text: "@api build endpoints",
+    kind: "brief",
+    briefTarget: "api",
+    now: at(1),
+  });
+  const sysKill = Board.appendPost(swarm, {
+    from: "coordinator",
+    text: "killed helper",
+    kind: "system",
+    now: at(2),
+  });
+  const sysAlert = Board.appendPost(swarm, {
+    from: "system",
+    text: "@coordinator [error] ui failed: boom",
+    kind: "system",
+    now: at(3),
+  });
+  const stall = Board.appendPost(swarm, {
+    from: "monitor",
+    text: "@coordinator [stall] no movement",
+    kind: "stall",
+    now: at(4),
+  });
+  const peerPost = Board.appendPost(swarm, {
+    from: "api",
+    text: "@ui ready",
+    now: at(5),
+  });
+  if (
+    "refused" in apiBrief ||
+    "refused" in sysKill ||
+    "refused" in sysAlert ||
+    "refused" in stall ||
+    "refused" in peerPost
+  ) {
+    assert.fail("unexpected refusal");
+  }
+
+  // ui does not get api's brief or zero-mention system notice in unreadVisiblePosts or default readPosts.
+  const uiUnread = Board.unreadVisiblePosts(swarm, ui).map((post) => post.seq);
+  assert.notInclude(uiUnread, apiBrief.seq);
+  assert.notInclude(uiUnread, sysKill.seq);
+  assert.include(uiUnread, peerPost.seq);
+
+  // Coordinator still sees its own [error] alert and stall, while skipping routine zero-mention system notice.
+  const coordDefault = Board.readPosts(swarm, coordinator, { since: 0, limit: 50 }).map(
+    (post) => post.seq,
+  );
+  assert.notInclude(coordDefault, sysKill.seq);
+  assert.include(coordDefault, sysAlert.seq);
+  assert.include(coordDefault, stall.seq);
+
+  // Opt-in flags bring back briefs and zero-mention system logs.
+  const withAll = Board.readPosts(swarm, coordinator, {
+    since: 0,
+    limit: 50,
+    includeBriefs: true,
+    includeSystem: true,
+  }).map((post) => post.seq);
+  assert.include(withAll, apiBrief.seq);
+  assert.include(withAll, sysKill.seq);
+
+  // Targeted seqs bypass noise/since filters while still enforcing channel visibility.
+  swarm.channels.push({
+    name: "secret",
+    topic: "",
+    createdBy: "coordinator",
+    archived: false,
+  });
+  api.channels.push("secret");
+  const secretPost = Board.appendPost(swarm, {
+    from: "api",
+    text: "internal secret",
+    channel: "secret",
+    now: at(6),
+  });
+  if ("refused" in secretPost) assert.fail("unexpected refusal");
+
+  const targeted = Board.readPosts(swarm, ui, {
+    since: 999,
+    limit: 50,
+    seqs: [apiBrief.seq, sysKill.seq, secretPost.seq],
+  }).map((post) => post.seq);
+  assert.deepStrictEqual(targeted, [apiBrief.seq, sysKill.seq]);
+});
+
+it("sumMetrics accumulates counters without summing live context window snapshots", () => {
+  const total = Board.sumMetrics([
+    {
+      turns: 2,
+      inputTokens: 1_000,
+      outputTokens: 200,
+      cachedInputTokens: 800,
+      reasoningTokens: 0,
+      totalTokens: 1_200,
+      lastContextTokens: 60_000,
+      maxContextTokens: 200_000,
+    },
+    {
+      turns: 3,
+      inputTokens: 2_000,
+      outputTokens: 300,
+      cachedInputTokens: 1_500,
+      reasoningTokens: 50,
+      totalTokens: 2_300,
+      lastContextTokens: 80_000,
+      maxContextTokens: 200_000,
+    },
+  ]);
+  assert.strictEqual(total.turns, 5);
+  assert.strictEqual(total.totalTokens, 3_500);
+  assert.isUndefined(total.lastContextTokens);
+  assert.isUndefined(total.maxContextTokens);
+});

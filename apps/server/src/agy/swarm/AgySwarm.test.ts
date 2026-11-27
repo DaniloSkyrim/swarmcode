@@ -129,6 +129,7 @@ const withSwarmHarness = <A, E>(
     readonly workerId: ThreadId;
     readonly stateDir: string;
     readonly sent: Array<{ readonly threadId: ThreadId; readonly text: string }>;
+    readonly launchedPrompts: Array<{ readonly threadId: ThreadId; readonly text: string }>;
     readonly setStatus: (threadId: ThreadId, status: OrchestrationV2ThreadShell["status"]) => void;
     readonly setModelSelection: (threadId: ThreadId, selection: ModelSelection) => void;
     readonly deleteThread: (threadId: ThreadId) => void;
@@ -136,13 +137,31 @@ const withSwarmHarness = <A, E>(
       threadId: ThreadId,
       status: OrchestrationV2RunStatus,
     ) => Effect.Effect<void>;
+    readonly emitTurnUsage: (
+      threadId: ThreadId,
+      turnId: string,
+      usage: {
+        readonly usedTokens: number;
+        readonly maxTokens?: number | null;
+        readonly inputTokens?: number;
+        readonly cachedInputTokens?: number;
+        readonly outputTokens?: number;
+      },
+    ) => Effect.Effect<void>;
+    readonly emitTurnStarted: (threadId: ThreadId, turnId: string) => Effect.Effect<void>;
+    readonly emitProviderThreadContext: (
+      threadId: ThreadId,
+      contextUsage: { readonly usedTokens: number; readonly maxTokens?: number } | null,
+    ) => Effect.Effect<void>;
     readonly emitThreadEvent: (
       threadId: ThreadId,
       type: "thread.model-selection-updated" | "thread.provider-switched",
     ) => Effect.Effect<void>;
     readonly awaitDomainSubscription: () => Effect.Effect<void>;
     readonly nextWake: () => Effect.Effect<void>;
+    readonly nextLaunch: () => Effect.Effect<void>;
   }) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  options?: { readonly tuning?: AgySwarm.AgySwarmTuning },
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -154,7 +173,9 @@ const withSwarmHarness = <A, E>(
       ]);
       const deletedThreads = new Set<ThreadId>();
       const sent: Array<{ readonly threadId: ThreadId; readonly text: string }> = [];
+      const launchedPrompts: Array<{ readonly threadId: ThreadId; readonly text: string }> = [];
       let wakeSignal = yield* Deferred.make<void>();
+      let launchSignal = yield* Deferred.make<void>();
       const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
       const eventsSubscribed = yield* Deferred.make<void>();
       let nextDomainSub = yield* Deferred.make<void>();
@@ -191,9 +212,18 @@ const withSwarmHarness = <A, E>(
       } as unknown as ThreadManagementService.ThreadManagementService["Service"];
 
       const launches = {
-        launch: (input: { readonly threadId: ThreadId }) =>
-          Effect.sync(() => {
+        launch: (input: {
+          readonly threadId: ThreadId;
+          readonly initialMessage?: { readonly text: string };
+        }) =>
+          Effect.gen(function* () {
+            launchedPrompts.push({
+              threadId: input.threadId,
+              text: input.initialMessage?.text ?? "",
+            });
             shells.set(input.threadId, makeShell(input.threadId, "running"));
+            yield* Deferred.succeed(launchSignal, undefined);
+            launchSignal = yield* Deferred.make<void>();
             return {} as never;
           }),
       } as unknown as ThreadLaunchService.ThreadLaunchService["Service"];
@@ -228,7 +258,9 @@ const withSwarmHarness = <A, E>(
         getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" }),
       } as unknown as ProjectService.ProjectService["Service"];
 
-      const layer = AgySwarm.layer.pipe(
+      const layer = AgySwarm.makeLayer(
+        options?.tuning ?? { wakeCoalesceMs: 0, batchWarmupStaggerMs: 0 },
+      ).pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ServerConfig.ServerConfig, {
@@ -256,6 +288,7 @@ const withSwarmHarness = <A, E>(
         workerId,
         stateDir,
         sent,
+        launchedPrompts,
         setStatus: (threadId, status) => {
           const current = shells.get(threadId) ?? makeShell(threadId, status);
           shells.set(threadId, {
@@ -277,10 +310,66 @@ const withSwarmHarness = <A, E>(
         },
         emitRunStatus: (threadId, status) =>
           PubSub.publish(events, makeRunUpdatedEvent(threadId, status)).pipe(Effect.asVoid),
+        emitTurnUsage: (threadId, turnId, usage) =>
+          PubSub.publish(events, {
+            id: EventId.make(`event:${threadId}:usage:${++nextEventSeq}`),
+            type: "provider-turn.updated",
+            threadId,
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: {
+              id: turnId,
+              tokenUsage: {
+                usedTokens: usage.usedTokens,
+                ...(usage.maxTokens === undefined ? {} : { maxTokens: usage.maxTokens }),
+                ...(usage.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens }),
+                ...(usage.cachedInputTokens === undefined
+                  ? {}
+                  : { cachedInputTokens: usage.cachedInputTokens }),
+                ...(usage.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
+              },
+              ...(usage.inputTokens !== undefined
+                ? {
+                    turnTokenUsage: {
+                      inputTokens: usage.inputTokens,
+                      outputTokens: usage.outputTokens ?? 0,
+                      cachedInputTokens: usage.cachedInputTokens ?? 0,
+                      reasoningTokens: 0,
+                    },
+                  }
+                : {}),
+            },
+          } as unknown as OrchestrationV2DomainEvent).pipe(Effect.asVoid),
+        emitTurnStarted: (threadId, turnId) =>
+          PubSub.publish(events, {
+            id: EventId.make(`event:${threadId}:turn-started:${++nextEventSeq}`),
+            type: "provider-turn.updated",
+            threadId,
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: {
+              id: turnId,
+              status: "running",
+            },
+          } as unknown as OrchestrationV2DomainEvent).pipe(Effect.asVoid),
+        emitProviderThreadContext: (threadId, contextUsage) =>
+          PubSub.publish(events, {
+            id: EventId.make(`event:${threadId}:ctx:${++nextEventSeq}`),
+            type: "provider-thread.updated",
+            threadId,
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: {
+              id: threadId,
+              appThreadId: threadId,
+              contextUsage,
+            },
+          } as unknown as OrchestrationV2DomainEvent).pipe(Effect.asVoid),
         emitThreadEvent: (threadId, type) =>
           PubSub.publish(events, makeThreadEvent(threadId, type)).pipe(Effect.asVoid),
         awaitDomainSubscription: () => Deferred.await(nextDomainSub),
         nextWake: () => Deferred.await(wakeSignal),
+        nextLaunch: () => Deferred.await(launchSignal),
       });
     }),
   ).pipe(Effect.provide(NodeServices.layer));
@@ -655,11 +744,17 @@ it.effect("read_board and swarm_wait page a large backlog; long posts get a note
       assert.notInclude(first.posts, "log 8 ");
       assert.include(first.posts, "More posts after #");
 
-      const rest = yield* swarm.read(coordinatorId, {});
-      assert.include(rest.posts, "log 6 ");
-      assert.notInclude(rest.posts, "log 5 ");
-      assert.include(rest.posts, "log 8 ");
-      assert.notInclude(rest.posts, "More posts after #");
+      // Drain remaining 8,500-char pages until log 8 arrives with no truncation notice.
+      let page = first;
+      const seen = [first.posts];
+      for (let step = 0; step < 6 && page.posts.includes("More posts after #"); step++) {
+        page = yield* swarm.read(coordinatorId, {});
+        seen.push(page.posts);
+      }
+      const combined = seen.join("\n");
+      assert.include(combined, "log 6 ");
+      assert.include(combined, "log 8 ");
+      assert.notInclude(page.posts, "More posts after #");
     }),
   ),
 );
@@ -800,7 +895,7 @@ it.effect(
           getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" }),
         } as unknown as ProjectService.ProjectService["Service"];
 
-        const layer = AgySwarm.layer.pipe(
+        const layer = AgySwarm.makeLayer({ wakeCoalesceMs: 0, batchWarmupStaggerMs: 0 }).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ServerConfig.ServerConfig, {
@@ -1585,4 +1680,214 @@ it.effect("cleans up forked worktree and branch when delivering the initial brie
       assert.lengthOf(deletedBranches, 1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("targeted read_board{seqs} fetches cited posts without advancing lastReadSeq", () =>
+  withSwarmHarness(({ swarm, coordinatorId, workerId }) =>
+    Effect.gen(function* () {
+      const p2 = yield* swarm.post(workerId, { text: "first note" });
+      const p3 = yield* swarm.post(workerId, { text: "second note" });
+      const p4 = yield* swarm.post(workerId, { text: "third note" });
+
+      const targeted = yield* swarm.read(coordinatorId, { seqs: [p3.seq] });
+      assert.include(targeted.posts, "second note");
+      assert.notInclude(targeted.posts, "first note");
+      assert.notInclude(targeted.posts, "third note");
+
+      // Coordinator's unread cursor must remain before p2.
+      const sequential = yield* swarm.read(coordinatorId, {});
+      assert.include(sequential.posts, "first note");
+      assert.include(sequential.posts, "third note");
+      assert.strictEqual(sequential.head, p4.seq);
+      assert.isBelow(p2.seq, p4.seq);
+
+      // Targeted read_board{seqs} lists omitted seq numbers if oversized.
+      const big1 = yield* swarm.post(workerId, { text: "A".repeat(5_000) });
+      const big2 = yield* swarm.post(workerId, { text: "B".repeat(5_000) });
+      const truncated = yield* swarm.read(coordinatorId, { seqs: [big1.seq, big2.seq] });
+      assert.include(truncated.posts, "A".repeat(5_000));
+      assert.notInclude(truncated.posts, "B".repeat(5_000));
+      assert.include(truncated.posts, `#${big2.seq}`);
+    }),
+  ),
+);
+
+it.effect(
+  "status displays live ctx, cache %, and near-compaction alerts, plus aligned sharedDir preamble",
+  () =>
+    withSwarmHarness(({ swarm, coordinatorId, workerId, launchedPrompts, emitTurnUsage }) =>
+      Effect.gen(function* () {
+        yield* swarm.add(coordinatorId, { name: "reviewer", brief: "review code" });
+        assert.isAtLeast(launchedPrompts.length, 2);
+        const firstPrompt = launchedPrompts[0]!.text;
+        const secondPrompt = launchedPrompts[1]!.text;
+        // Both workers share an identical preamble prefix up through their shared swarm directory.
+        const prefixCut = firstPrompt.indexOf("- Worker identity:");
+        assert.isAbove(prefixCut, 100);
+        assert.strictEqual(firstPrompt.slice(0, prefixCut), secondPrompt.slice(0, prefixCut));
+        assert.include(firstPrompt, "Shared swarm directory");
+
+        yield* emitTurnUsage(workerId, "turn-1", {
+          usedTokens: 150_000,
+          maxTokens: 200_000,
+          inputTokens: 100_000,
+          cachedInputTokens: 92_000,
+          outputTokens: 1_500,
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+
+        const text = yield* swarm.status(coordinatorId);
+        assert.include(text, "ctx ~150k/200k [near compaction], cache 92%");
+      }),
+    ),
+);
+
+it.effect(
+  "updates ACP live context telemetry from provider-thread.updated and clears near-compaction on null",
+  () =>
+    withSwarmHarness(({ swarm, coordinatorId, workerId, emitProviderThreadContext }) =>
+      Effect.gen(function* () {
+        yield* emitProviderThreadContext(workerId, {
+          usedTokens: 160_000,
+          maxTokens: 200_000,
+        });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        // Acquire and release the swarm lock so the async save finishes before emitting null.
+        yield* swarm.read(coordinatorId, {});
+
+        const saturated = yield* swarm.status(coordinatorId);
+        assert.include(saturated, "ctx ~160k/200k [near compaction]");
+
+        yield* emitProviderThreadContext(workerId, null);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* swarm.read(coordinatorId, {});
+
+        const compacted = yield* swarm.status(coordinatorId);
+        assert.notInclude(compacted, "[near compaction]");
+        assert.notInclude(compacted, "ctx ~160k");
+      }),
+    ),
+);
+
+it.effect(
+  "coalesces routine coordinator wakes while other workers run and flushes on completion or timer",
+  () =>
+    withSwarmHarness(
+      ({ swarm, coordinatorId, workerId, sent, setStatus, emitRunStatus, nextWake }) =>
+        Effect.gen(function* () {
+          yield* swarm.add(coordinatorId, { name: "worker-2", brief: "parallel work" });
+          const snap = yield* swarm.snapshot(coordinatorId);
+          const worker2Id = snap!.members.find((member) => member.name === "worker-2")!.threadId;
+
+          // Posting worker remains "running" while posting mid-turn; worker-2 is also "running" -> coalesce.
+          yield* swarm.post(workerId, { text: "@coordinator first batch result" });
+          yield* Effect.yieldNow;
+          assert.lengthOf(sent, 0);
+
+          // Urgent [error] / blocker wakes immediately even while worker-2 runs.
+          const wake1 = nextWake();
+          yield* swarm.post(workerId, { text: "@coordinator [blocked] missing env" });
+          yield* wake1;
+          assert.lengthOf(sent, 1);
+          assert.include(sent[0]!.text, "first batch result");
+          assert.include(sent[0]!.text, "[blocked] missing env");
+
+          // Coordinator ends its turn; another routine post while worker-2 runs coalesces.
+          setStatus(coordinatorId, "completed");
+          yield* emitRunStatus(coordinatorId, "completed");
+          yield* swarm.post(workerId, { text: "@coordinator follow-up" });
+          yield* Effect.yieldNow;
+          assert.lengthOf(sent, 1);
+
+          // When worker-2 finishes while posting worker is still running, coalesce stays armed until worker also finishes.
+          setStatus(worker2Id, "completed");
+          yield* emitRunStatus(worker2Id, "completed");
+          yield* Effect.yieldNow;
+          assert.lengthOf(sent, 1);
+
+          const wake2 = nextWake();
+          setStatus(workerId, "completed");
+          yield* emitRunStatus(workerId, "completed");
+          yield* wake2;
+          assert.lengthOf(sent, 2);
+          assert.include(sent[1]!.text, "follow-up");
+
+          // When ONLY the posting worker is still "running" (no other working workers), coordinator wakes immediately.
+          setStatus(coordinatorId, "completed");
+          yield* emitRunStatus(coordinatorId, "completed");
+          setStatus(workerId, "running");
+          const wakeSolo = nextWake();
+          yield* swarm.post(workerId, { text: "@coordinator only me running" });
+          yield* wakeSolo;
+          assert.lengthOf(sent, 3);
+          assert.include(sent[2]!.text, "only me running");
+
+          // Next coalesced wake also fires automatically after wakeCoalesceMs elapses.
+          setStatus(coordinatorId, "completed");
+          yield* emitRunStatus(coordinatorId, "completed");
+          setStatus(worker2Id, "running");
+          yield* swarm.post(workerId, { text: "@coordinator timer wake" });
+          yield* Effect.yieldNow;
+          assert.lengthOf(sent, 3);
+
+          const wake3 = nextWake();
+          yield* TestClock.adjust("4100 millis");
+          yield* wake3;
+          assert.lengthOf(sent, 4);
+          assert.include(sent[3]!.text, "timer wake");
+        }),
+      { tuning: { wakeCoalesceMs: 4_000, wakeCoalesceMaxMs: 8_000, batchWarmupStaggerMs: 0 } },
+    ),
+);
+
+it.effect(
+  "staggers same-model non-forked worker batches until usage/context event or timeout, ignoring empty running turns",
+  () =>
+    withSwarmHarness(
+      ({
+        swarm,
+        coordinatorId,
+        launchedPrompts,
+        emitTurnStarted,
+        emitProviderThreadContext,
+        nextLaunch,
+      }) =>
+        Effect.gen(function* () {
+          const beforeCount = launchedPrompts.length;
+          const firstLaunch = nextLaunch();
+          const addFiber = yield* Effect.forkChild(
+            swarm.add(coordinatorId, {
+              workers: [
+                { name: "leader", brief: "first" },
+                { name: "follower", brief: "second" },
+              ],
+            }),
+          );
+          yield* firstLaunch;
+          yield* Effect.yieldNow;
+
+          // Only wave-1 leader has started so far; follower waits for leader warmup signal.
+          assert.lengthOf(launchedPrompts, beforeCount + 1);
+          const leaderThreadId = launchedPrompts[beforeCount]!.threadId;
+
+          // Empty status:"running" provider-turn.updated must NOT prematurely release follower.
+          yield* emitTurnStarted(leaderThreadId, "turn-empty");
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          assert.lengthOf(launchedPrompts, beforeCount + 1);
+
+          // ACP contextUsage with usedTokens > 0 cleanly releases follower.
+          yield* emitProviderThreadContext(leaderThreadId, {
+            usedTokens: 1_000,
+            maxTokens: 200_000,
+          });
+          yield* Fiber.join(addFiber);
+
+          assert.lengthOf(launchedPrompts, beforeCount + 2);
+        }),
+      { tuning: { wakeCoalesceMs: 0, batchWarmupStaggerMs: 2_000 } },
+    ),
 );

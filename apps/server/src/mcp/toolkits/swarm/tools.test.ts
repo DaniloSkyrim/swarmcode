@@ -152,4 +152,14 @@ it("decodes batch workers, workerTasks, and planTasks cleanly", () => {
   assert.strictEqual(richPlan.milestones?.[0]?.gates?.critic, "passed");
   assert.strictEqual(richPlan.rounds?.[0]?.status, "fixed");
   assert.strictEqual(richPlan.finalAudit?.status, "running");
+
+  const decodeRead = Schema.decodeUnknownSync(SwarmToolkit.tools.read_board.parametersSchema);
+  const targetedRead = decodeRead({
+    seqs: [3, 7],
+    includeBriefs: true,
+    includeSystem: false,
+  });
+  assert.deepStrictEqual(targetedRead.seqs, [3, 7]);
+  assert.strictEqual(targetedRead.includeBriefs, true);
+  assert.strictEqual(targetedRead.includeSystem, false);
 });

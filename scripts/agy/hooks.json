@@ -451,6 +451,45 @@
     {
       "file": "knip.jsonc",
       "snippets": ["\"agy/check-hooks.ts\","]
+    },
+    {
+      "file": "packages/provider-core/src/server/orchestrationInstructions.ts",
+      "snippets": [
+        "const T3_CODE_ACP_SWARM_PROXY_INSTRUCTIONS = ",
+        "export const T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS = ",
+        "readonly isSwarmMember?: boolean;"
+      ]
+    },
+    {
+      "file": "packages/provider-acp/src/server/adapter.ts",
+      "snippets": [
+        "...(turnInput.appThread.lineage.swarmMember === true ? { isSwarmMember: true } : {}),"
+      ]
+    },
+    {
+      "file": "packages/provider-cursor/src/server/adapter.ts",
+      "snippets": [
+        "...(turnInput.appThread.lineage.swarmMember === true ? { isSwarmMember: true } : {}),"
+      ]
+    },
+    {
+      "file": "packages/provider-opencode/src/server/v2/adapter.ts",
+      "snippets": ["turnInput.appThread.lineage.swarmMember === true,"]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+      "snippets": [
+        "T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS,",
+        "...(turnInput.appThread.lineage.swarmMember === true ? { isSwarmMember: true } : {}),"
+      ]
+    },
+    {
+      "file": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+      "snippets": ["isSwarmMember: turnInput.appThread.lineage.swarmMember === true,"]
+    },
+    {
+      "file": "apps/server/src/provider/CodexDeveloperInstructions.ts",
+      "snippets": ["T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS,", "isSwarmMember = false,"]
     }
   ]
 }

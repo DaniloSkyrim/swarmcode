@@ -2900,6 +2900,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             deviceInstructionsDelivered: delivered.device,
             providerInstructions: CURSOR_BACKGROUND_WAIT_INSTRUCTIONS,
             providerInstructionsDelivered: delivered.backgroundWait,
+            ...(turnInput.appThread.lineage.swarmMember === true ? { isSwarmMember: true } : {}),
           });
           const userText =
             interrupted === undefined

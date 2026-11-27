@@ -157,11 +157,18 @@ const PostMessageTool = Tool.make("post_message", {
 
 const ReadBoardTool = Tool.make("read_board", {
   description:
-    'Read your swarm\'s board after post #since (default: what you last read). channel:"*" reads every channel you can see.',
+    'Read your swarm\'s board after post #since (default: what you last read), or fetch cited `#seq` posts directly via `seqs`. channel:"*" reads every channel you can see.',
   parameters: Schema.Struct({
     since: Schema.optional(Schema.Int),
     channel: Schema.optional(Schema.String),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 300 }))),
+    seqs: Schema.optional(
+      Schema.Array(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))).check(
+        Schema.isMaxLength(50),
+      ),
+    ),
+    includeBriefs: Schema.optional(Schema.Boolean),
+    includeSystem: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({ posts: Schema.String, head: Schema.Int }),
   failure: OrchestratorMcpFailure,

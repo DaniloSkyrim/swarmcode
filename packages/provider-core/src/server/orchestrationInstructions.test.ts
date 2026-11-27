@@ -117,4 +117,57 @@ describe("T3 device instructions", () => {
       "t3_call",
     );
   });
+
+  it("emits compact swarm-member instructions across ACP, Prompt, and System helpers without changing non-swarm output", () => {
+    const baseState = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+    } as const;
+    const regularAcp = t3AcpPromptWithInstructions({ prompt: "Do work.", state: baseState });
+    const swarmAcp = t3AcpPromptWithInstructions({
+      prompt: "Do work.",
+      state: { ...baseState, isSwarmMember: true },
+    });
+    assert.isBelow(swarmAcp.length, regularAcp.length);
+    assert.include(swarmAcp, "`t3_swarm`");
+    assert.notInclude(swarmAcp, "## T3 Code browser");
+    assert.notInclude(swarmAcp, "Visuals and preview");
+
+    const regularProxy = t3AcpPromptWithInstructions({
+      prompt: "Do work.",
+      state: { ...baseState, mcpToolExposure: "proxy" },
+    });
+    const swarmProxy = t3AcpPromptWithInstructions({
+      prompt: "Do work.",
+      state: { ...baseState, mcpToolExposure: "proxy", isSwarmMember: true },
+    });
+    assert.isBelow(swarmProxy.length, regularProxy.length);
+    assert.include(swarmProxy, "tool_search");
+    assert.include(swarmProxy, "t3_call");
+    assert.notInclude(swarmProxy, "delegate_task");
+
+    const regularPrompt = t3OrchestrationPrompt({
+      prompt: "Do work.",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      orchestrationDelivered: false,
+      deviceInstructionsDelivered: false,
+    });
+    const swarmPrompt = t3OrchestrationPrompt({
+      prompt: "Do work.",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      orchestrationDelivered: false,
+      deviceInstructionsDelivered: false,
+      isSwarmMember: true,
+    });
+    assert.isBelow(swarmPrompt.length, regularPrompt.length);
+    assert.notInclude(swarmPrompt, "Visuals and preview");
+
+    const regularSys = t3OrchestrationSystemPrompt(true, false)!;
+    const swarmSys = t3OrchestrationSystemPrompt(true, false, true)!;
+    assert.isBelow(swarmSys.length, regularSys.length);
+    assert.include(swarmSys, "swarm worker");
+  });
 });

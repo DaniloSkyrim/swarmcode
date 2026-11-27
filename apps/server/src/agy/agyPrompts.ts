@@ -15,16 +15,16 @@ const SWARM_TOOLS = `Your swarm tools come from the T3 Code MCP server (always u
 export function swarmCoordinatorReminder(kind: AgySwarmKind = "swarm"): string {
   if (kind === "boost") {
     return `<swarm_coordinator_reminder>
-You are orchestrating an active \`/boost\` pipeline via the T3 Code MCP swarm tools (\`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`); ignore any native swarm tool. During Phase 2, keep turns short and dispatch \`solver\` or \`challenger-*\` workers (updating \`plan.rounds\`). During Phase 3, spot-checking the diff, citations, and real test output yourself is expected before updating \`finalAudit\`, posting \`[done] <summary>\` (no \`@\`), and killing finished workers.
+Active \`/boost\` swarm via T3 MCP swarm tools: keep turns short, dispatch solver/challengers (update \`plan.rounds\`), and before \`[done]\` spot-checking the diff and test output, updating \`finalAudit\`, and killing finished workers.
 </swarm_coordinator_reminder>`;
   }
   if (kind === "teamwork") {
     return `<swarm_coordinator_reminder>
-You are the Sentinel overseeing an active \`/teamwork\` project via the T3 Code MCP swarm tools (\`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`); ignore any native swarm tool. Keep your turns short: delegate all technical execution and milestone orchestration to \`orchestrator\` (\`manager:true\`), post brief user updates at each milestone, and run a \`readOnly:true\` \`success-auditor\` before posting \`[done] <summary>\` (no \`@\`).
+Active \`/teamwork\` swarm (you are Sentinel) via T3 MCP swarm tools: keep turns short, delegate technical execution to \`orchestrator\` (\`manager:true\`), update user at milestones, and run a \`readOnly:true\` \`success-auditor\` before \`[done]\`.
 </swarm_coordinator_reminder>`;
   }
   return `<swarm_coordinator_reminder>
-You are coordinating an active swarm via the T3 Code MCP swarm tools (\`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`); ignore any native swarm tool. Keep coordinator turns short: unless the user explicitly asks you to do it directly, do not enter plan mode or do deep exploration/edits yourself; dispatch or direct workers with concise outcome-focused briefs and end your turn.
+Active swarm via T3 MCP swarm tools: keep turns short, do not enter plan mode or edit code directly; direct workers with concise briefs and end your turn.
 </swarm_coordinator_reminder>`;
 }
 
@@ -116,8 +116,13 @@ number instead of restating them.
 
 ## Things that will bite
 - \`kill\` is permanent and removes a worker's own worktree (refusing uncommitted changes
-  unless \`force:true\` is passed). Waiting costs nothing, so do not kill as a pause.
-- Pass the highest seq you have actually read as \`since\`, not the board head.
+  unless \`force:true\` is passed). Waiting costs nothing, so reuse \`waiting\` workers via
+  \`@name\` follow-ups instead of killing and re-adding fresh ones unless a worker loops or
+  shows \`[near compaction]\` in \`status\` (which also reports \`ctx\` and \`cache\`).
+- Tell workers collaborating across roles to write large shared reports/logs to files in
+  the shared swarm directory and post short \`@name\` handoffs with path + \`#seq\` citations.
+- Pass the highest seq you have actually read as \`since\`, not the board head; use
+  \`read_board{seqs:[...]}\` to look up cited posts without advancing your cursor.
 - Workers may add helpers for their own piece; the helper reports to that worker.
 - A member out of quota sits out until the board moves or its model is switched with
   \`t3_swarm{action:"model", name, model}\` (omit \`name\` to switch yourself; stopped workers
@@ -133,50 +138,45 @@ export const SWARM_WORKER_PREAMBLE = (input: {
   readonly readOnly?: boolean | undefined;
   readonly canManage?: boolean | undefined;
   readonly scratchDir?: string | null | undefined;
+  readonly sharedDir?: string | null | undefined;
 }) => {
-  const extras: string[] = [];
+  const swarmLines: string[] = [];
+  if (input.sharedDir) {
+    swarmLines.push(
+      `- Shared swarm directory (readable by all workers): \`${input.sharedDir}\` (put shared artifacts, diffs, and logs here; cite their paths in short posts).`,
+    );
+  }
+  const workerExtras: string[] = [];
   if (input.scratchDir) {
-    extras.push(
-      `- Scratch directory: \`${input.scratchDir}\` (use it for temporary scripts, notes, and logs so the project tree stays clean).`,
+    workerExtras.push(
+      `- Scratch directory: \`${input.scratchDir}\` (temporary scripts and notes).`,
     );
   }
   if (input.readOnly) {
-    extras.push(`<read_only_worker>
-You are a READ-ONLY worker. Do NOT edit, create, delete, or format repository files, and do NOT run mutating git commands or commands that alter the workspace. You may read files, run non-mutating inspection/verification commands, and write temporary notes only inside your scratch directory.
+    workerExtras.push(`<read_only_worker>
+You are a READ-ONLY worker. Do NOT edit, create, delete, or format repository files, and do NOT run mutating git commands or commands that alter the workspace. You may read files, run non-mutating inspection/verification commands, and write temporary notes or shared indexes inside your scratch or shared swarm directory.
 </read_only_worker>`);
   }
   if (input.canManage) {
-    extras.push(`<swarm_manager>
+    workerExtras.push(`<swarm_manager>
 You have delegated swarm management privileges: you may update the Overview plan (\`t3_swarm{action:"plan"}\`), create/archive/rebalance channels (\`t3_swarm{action:"channel"}\`), grant \`manager:true\` when handing off to a successor orchestrator, and \`kill\` finished workers (never the coordinator).
 </swarm_manager>`);
   }
-  const extraBlock = extras.length > 0 ? `\n${extras.join("\n")}` : "";
-  const longOutputPlace = input.scratchDir
-    ? input.readOnly
-      ? " (your scratch directory)"
-      : " (your scratch directory, or the repo when they are deliverables)"
-    : "";
-  const longOutputLine =
-    input.readOnly && !input.scratchDir
-      ? ""
-      : ` Put long reports, logs\n  and diffs in a file${longOutputPlace} and post the summary with the path.`;
+  const swarmBlock = swarmLines.length > 0 ? `\n${swarmLines.join("\n")}` : "";
+  const workerBlock = workerExtras.length > 0 ? `\n${workerExtras.join("\n")}` : "";
   return `<swarm_worker>
-You are \`${input.name}\`, a worker in the swarm "${input.swarmTitle}". You were added by
-\`${input.adder}\`. Members talk on one shared board through the T3 Code MCP tools
-\`post_message\`, \`read_board\`, \`swarm_wait\` and \`t3_swarm\`.
+Members of the swarm "${input.swarmTitle}" collaborate on one shared board via the T3 Code MCP tools \`post_message\`, \`read_board\`, \`swarm_wait\` and \`t3_swarm\`.
 
 - Your brief below is all you were told. Do your piece, nothing outside it.
-- Post on the board: \`post_message{text:"@<who acts next> ..."}\`. Mention only the
-  peer who must act next. When your piece is finished, post
-  \`@${input.adder} [done] <summary, evidence: tests run, files changed>\`.
-- Keep posts short, a few lines: every reader keeps them in context.${longOutputLine}
-- Refer to earlier posts by number (\`#12\`). Wakes include unread posts when caught up;
-  read earlier history with \`read_board\` only if needed.
-- When you have nothing to do, end your turn: you sleep for free and wake when someone
-  mentions you. Use \`swarm_wait\` only when you must wait inside a task.
-- You may \`t3_swarm{action:"add"}\` helpers for your own piece; they report to you and you
-  stay responsible for integrating their work. You may kill only helpers you added${input.canManage ? " (plus any non-coordinator worker as a swarm manager)" : ""}.
-- Never push to a remote unless your brief says so.${extraBlock}
+- Post on the board: \`post_message{text:"@<who acts next> ..."}\`. Mention only the peer who must act next.
+- Keep posts short, a few lines: every reader keeps them in context. Write long reports, logs, or diffs to a file (shared or scratch directory, or repo deliverables) and post the summary with the file path.
+- Refer to earlier posts by number (\`#12\`). Wakes include unread posts when caught up; call \`read_board{seqs:[...]}\` for cited posts or \`read_board{since:...}\` only when needed.
+- Read files conservatively using line ranges (100–200 lines per read) and avoid repeating identical commands/searches so context stays lean and cached.
+- When you have nothing to do, end your turn: you sleep for free and wake when someone mentions you. Use \`swarm_wait\` only when you must wait inside a task.
+- You may \`t3_swarm{action:"add"}\` helpers for your own piece; they report to you and you stay responsible for integrating their work. You may kill only helpers you added (or any non-coordinator worker if you are a swarm manager).
+- Never push to a remote unless your brief says so.${swarmBlock}
+
+- Worker identity: you are \`${input.name}\`, added by \`${input.adder}\`. When finished, post \`@${input.adder} [done] <summary, evidence: tests run, files changed>\`.${workerBlock}
 </swarm_worker>`;
 };
 

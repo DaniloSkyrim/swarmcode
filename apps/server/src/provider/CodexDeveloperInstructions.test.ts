@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -76,6 +79,38 @@ describe("Codex device context", () => {
     NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+  });
+});
+
+describe("Codex swarm member context", () => {
+  it("uses compact swarm worker instructions and omits browser guidance while staying within cap", () => {
+    const standard = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: true },
+    );
+    const standardExplicitFalse = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: true },
+      false,
+    );
+    NodeAssert.deepStrictEqual(standardExplicitFalse, standard);
+
+    const swarmMember = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: true },
+      true,
+    );
+    NodeAssert.strictEqual(
+      swarmMember.t3_code_orchestration_01?.value,
+      T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS,
+    );
+    NodeAssert.strictEqual(swarmMember.t3_code_orchestration_02, undefined);
+    NodeAssert.ok(
+      Buffer.byteLength(swarmMember.t3_code_orchestration_01!.value, "utf8") <=
+        CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+    );
+    NodeAssert.ok(!swarmMember.t3_code_tools?.value.includes("## T3 Code browser"));
+    NodeAssert.ok(swarmMember.t3_code_tools?.value.includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
   });
 });
 

@@ -36,6 +36,8 @@ export const AgySwarmMetrics = Schema.Struct({
   cachedInputTokens: NonNegativeInt,
   reasoningTokens: NonNegativeInt,
   totalTokens: NonNegativeInt,
+  lastContextTokens: Schema.optional(NonNegativeInt),
+  maxContextTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
 });
 export type AgySwarmMetrics = typeof AgySwarmMetrics.Type;
 

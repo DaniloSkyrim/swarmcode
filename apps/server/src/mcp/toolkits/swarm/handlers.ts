@@ -139,7 +139,14 @@ export const layer = McpToolAccess.toLayer(SwarmToolkit, {
   ),
   read_board: McpToolAccess.readsAsCaller((input) =>
     asCaller((swarm, threadId) =>
-      swarm.read(threadId, { since: input.since, channel: input.channel, limit: input.limit }),
+      swarm.read(threadId, {
+        since: input.since,
+        channel: input.channel,
+        limit: input.limit,
+        seqs: input.seqs,
+        includeBriefs: input.includeBriefs,
+        includeSystem: input.includeSystem,
+      }),
     ),
   ),
   swarm_wait: McpToolAccess.readsAsCaller((input) =>

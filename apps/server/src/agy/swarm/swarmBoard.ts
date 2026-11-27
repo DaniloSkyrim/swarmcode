@@ -13,6 +13,8 @@ export interface StoredMemberMetrics {
   cachedInputTokens: number;
   reasoningTokens: number;
   totalTokens: number;
+  lastContextTokens?: number;
+  maxContextTokens?: number | null;
 }
 
 export const emptyMetrics = (): StoredMemberMetrics => ({
@@ -328,10 +330,25 @@ export function unreadWakePosts(
   );
 }
 
-/** All visible posts after `member.lastReadSeq` written by others, in board order. */
+/**
+ * Filters routine board noise from default reads and auto-wakes: other members' briefs and
+ * zero-mention lifecycle notices (`killed`, `switched`, `retried`). Direct `@<reader>`/`@all`
+ * system alerts, stalls, and regular posts remain visible by default.
+ */
+export function isReadableByDefault(reader: StoredMember, post: StoredPost): boolean {
+  if (post.kind === "brief") return post.mentions.includes(reader.name);
+  if (post.kind === "system") return post.mentions.length > 0;
+  return true;
+}
+
+/** All visible posts after `member.lastReadSeq` written by others (excluding default noise), in board order. */
 export function unreadVisiblePosts(swarm: StoredSwarm, member: StoredMember): StoredPost[] {
   return swarm.posts.filter(
-    (post) => post.seq > member.lastReadSeq && post.from !== member.name && visibleTo(member, post),
+    (post) =>
+      post.seq > member.lastReadSeq &&
+      post.from !== member.name &&
+      visibleTo(member, post) &&
+      isReadableByDefault(member, post),
   );
 }
 
@@ -394,16 +411,35 @@ export function appendPost(
 export function readPosts(
   swarm: StoredSwarm,
   reader: StoredMember,
-  input: { readonly since: number; readonly limit: number; readonly channel?: string | undefined },
+  input: {
+    readonly since: number;
+    readonly limit: number;
+    readonly channel?: string | undefined;
+    readonly seqs?: ReadonlyArray<number> | undefined;
+    readonly includeBriefs?: boolean | undefined;
+    readonly includeSystem?: boolean | undefined;
+  },
 ): StoredPost[] {
+  if (input.seqs !== undefined && input.seqs.length > 0) {
+    const wanted = new Set(input.seqs);
+    return swarm.posts
+      .filter((post) => wanted.has(post.seq) && visibleTo(reader, post))
+      .slice(0, input.limit);
+  }
   return swarm.posts
     .filter((post) => post.seq > input.since)
     .filter((post) => {
-      if (input.channel === "*") return visibleTo(reader, post);
-      if (input.channel !== undefined) {
-        return post.channel === input.channel && visibleTo(reader, post);
+      if (!visibleTo(reader, post)) return false;
+      if (input.channel !== undefined && input.channel !== "*" && post.channel !== input.channel) {
+        return false;
       }
-      return visibleTo(reader, post);
+      if (post.kind === "brief" && input.includeBriefs !== true) {
+        return post.mentions.includes(reader.name);
+      }
+      if (post.kind === "system" && input.includeSystem !== true) {
+        return post.mentions.length > 0;
+      }
+      return true;
     })
     .slice(0, input.limit);
 }

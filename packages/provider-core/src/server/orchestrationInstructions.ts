@@ -80,11 +80,22 @@ const T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Plan
 
 Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it. Treat this mode as active until T3 Code supplies a different interaction-mode instruction.`;
 
+const T3_CODE_ACP_SWARM_PROXY_INSTRUCTIONS = `## T3 Code tools
+
+Swarm tools (\`t3_swarm\`, \`post_message\`, \`read_board\`, \`swarm_wait\`) are directly listed as MCP tools. Access any other needed T3 tool via \`tool_search\` then \`t3_call\`; never fall back to shell MCP commands while they exist.`;
+
+export const T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS = `## T3 Code swarm worker
+
+- Focus only on your assigned piece; use \`t3_swarm\`/\`post_message\`/\`read_board\`/\`swarm_wait\` instead of native swarm tools or creating top-level threads (\`t3_thread_launch\`, \`create_threads\`).
+- Only use \`t3_swarm{action:"add"}\` for helper workers when your brief requires sub-delegation; otherwise execute the work directly.
+- If blocked on a user secret/credential, report the blocker on the board.`;
+
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
   readonly mcpToolExposure?: McpToolExposureMode;
+  readonly isSwarmMember?: boolean;
 }
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -99,35 +110,47 @@ export function t3AcpPromptWithInstructions(input: {
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
     input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
-    input.previousState.mcpToolExposure === input.state.mcpToolExposure
+    input.previousState.mcpToolExposure === input.state.mcpToolExposure &&
+    (input.previousState.isSwarmMember === true) === (input.state.isSwarmMember === true)
   ) {
     return input.prompt;
   }
   const isProxy = input.state.mcpToolExposure === "proxy";
+  const isSwarmMember = input.state.isSwarmMember === true;
   const instructions = [
     input.state.interactionMode === "plan"
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
     ...(input.state.hasT3Mcp
-      ? [
-          ...(isProxy ? [T3_CODE_ACP_PROXY_TOOL_INSTRUCTIONS] : []),
-          T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
-          ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-          (isProxy
-            ? T3_CODE_PROXY_ORCHESTRATION_INSTRUCTIONS
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS
-          ).trim(),
-          ...(isProxy ? [] : [T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS]),
-        ]
+      ? isSwarmMember
+        ? [
+            ...(isProxy ? [T3_CODE_ACP_SWARM_PROXY_INSTRUCTIONS] : []),
+            ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
+            T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS,
+            ...(isProxy ? [] : [T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS]),
+          ]
+        : [
+            ...(isProxy ? [T3_CODE_ACP_PROXY_TOOL_INSTRUCTIONS] : []),
+            T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+            ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
+            (isProxy
+              ? T3_CODE_PROXY_ORCHESTRATION_INSTRUCTIONS
+              : T3_CODE_ORCHESTRATION_INSTRUCTIONS
+            ).trim(),
+            ...(isProxy ? [] : [T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS]),
+          ]
       : []),
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-const orchestrationInstructions = (hasDeviceTools: boolean) =>
-  hasDeviceTools
-    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
-    : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+const orchestrationInstructions = (hasDeviceTools: boolean, isSwarmMember?: boolean) => {
+  const base =
+    isSwarmMember === true
+      ? T3_CODE_SWARM_MEMBER_ORCHESTRATION_INSTRUCTIONS
+      : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+  return hasDeviceTools ? `${base}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n` : base;
+};
 
 function prependT3OrchestrationInstructions(prompt: string, instructions: string): string {
   return `<t3_code_orchestration_instructions>${instructions.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
@@ -143,11 +166,12 @@ export function t3OrchestrationPrompt(input: {
   /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
   readonly providerInstructions?: string;
   readonly providerInstructionsDelivered?: boolean;
+  readonly isSwarmMember?: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
   const instructions = [
     !input.orchestrationDelivered
-      ? orchestrationInstructions(input.hasDeviceTools)
+      ? orchestrationInstructions(input.hasDeviceTools, input.isSwarmMember)
       : input.hasDeviceTools && !input.deviceInstructionsDelivered
         ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS
         : undefined,
@@ -161,6 +185,7 @@ export function t3OrchestrationPrompt(input: {
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
+  isSwarmMember?: boolean,
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools, isSwarmMember) : undefined;
 }

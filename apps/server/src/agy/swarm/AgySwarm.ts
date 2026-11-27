@@ -6,6 +6,7 @@ import {
   type AgyActiveSwarmsSnapshot,
   type AgySwarmKind,
   type AgySwarmMemberState,
+  type AgySwarmMetrics,
   type AgySwarmPlan,
   type AgySwarmPost,
   type AgySwarmSnapshot,
@@ -24,8 +25,10 @@ import { modelSelectionCommandType } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -41,7 +44,7 @@ import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
-import { forkParked } from "../../serverActivation.ts";
+import { forkParked, withoutParentSpan } from "../../serverActivation.ts";
 import { SWARM_WORKER_PREAMBLE } from "../agyPrompts.ts";
 import * as Board from "./swarmBoard.ts";
 
@@ -161,6 +164,9 @@ export interface AgySwarmShape {
       readonly since?: number | undefined;
       readonly channel?: string | undefined;
       readonly limit?: number | undefined;
+      readonly seqs?: ReadonlyArray<number> | undefined;
+      readonly includeBriefs?: boolean | undefined;
+      readonly includeSystem?: boolean | undefined;
     },
   ) => Effect.Effect<{ readonly posts: string; readonly head: number }, AgySwarmError>;
   readonly wait: (
@@ -266,7 +272,17 @@ const STATE_EVENT_PREFIXES = [
   "thread.provider-switched",
 ];
 
-const metricsKey = (metrics: Board.StoredMemberMetrics) =>
+export interface AgySwarmTuning {
+  readonly wakeCoalesceMs?: number;
+  readonly wakeCoalesceMaxMs?: number;
+  readonly batchWarmupStaggerMs?: number;
+}
+
+const DEFAULT_WAKE_COALESCE_MS = 4_000;
+const DEFAULT_WAKE_COALESCE_MAX_MS = 8_000;
+const DEFAULT_BATCH_WARMUP_STAGGER_MS = 2_000;
+
+const metricsKey = (metrics: AgySwarmMetrics) =>
   [
     metrics.turns,
     metrics.inputTokens,
@@ -274,6 +290,8 @@ const metricsKey = (metrics: Board.StoredMemberMetrics) =>
     metrics.cachedInputTokens,
     metrics.reasoningTokens,
     metrics.totalTokens,
+    metrics.lastContextTokens ?? "",
+    metrics.maxContextTokens ?? "",
   ].join(":");
 
 /** Everything a snapshot shows, cheaply, so an unchanged swarm is never sent twice. */
@@ -320,7 +338,7 @@ const MAX_ADD_BATCH = 16;
 const SPAWN_CONCURRENCY = 4;
 const WAKE_MAX_POSTS = 20;
 const WAKE_MAX_CHARS = 6_000;
-const READ_MAX_CHARS = 24_000;
+const READ_MAX_CHARS = 8_500;
 const LONG_POST_CHARS = 1_500;
 const MAX_ALERTED_FAILED_RUNS = 500;
 const MAX_RECORDED_METRIC_KEYS = 2_000;
@@ -392,7 +410,53 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unkno
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-const make = Effect.gen(function* () {
+const formatK = (tokens: number) => `${Math.round(tokens / 1_000)}k`;
+
+const formatStatusTelemetry = (member: Board.StoredMember): string => {
+  if (!Board.isLive(member) || member.metrics === undefined) return "";
+  const metrics = member.metrics;
+  const parts: string[] = [];
+  if (metrics.lastContextTokens !== undefined && metrics.lastContextTokens > 0) {
+    const ctxCap =
+      metrics.maxContextTokens !== undefined &&
+      metrics.maxContextTokens !== null &&
+      metrics.maxContextTokens > 0
+        ? metrics.maxContextTokens
+        : null;
+    const nearLimit = ctxCap !== null ? ctxCap * 0.72 : 140_000;
+    const nearTag = metrics.lastContextTokens >= nearLimit ? " [near compaction]" : "";
+    parts.push(
+      ctxCap !== null
+        ? `ctx ~${formatK(metrics.lastContextTokens)}/${formatK(ctxCap)}${nearTag}`
+        : `ctx ~${formatK(metrics.lastContextTokens)}${nearTag}`,
+    );
+  }
+  if (metrics.inputTokens > 0) {
+    const cachePct = Math.min(
+      100,
+      Math.round((metrics.cachedInputTokens / metrics.inputTokens) * 100),
+    );
+    parts.push(`cache ${cachePct}%`);
+  }
+  return parts.length > 0 ? `; ${parts.join(", ")}` : "";
+};
+
+const isUrgentCoordinatorPost = (post: Board.StoredPost): boolean =>
+  post.from === "user" ||
+  post.kind === "stall" ||
+  (post.kind === "system" && post.mentions.length > 0) ||
+  /\[(?:error|stall|blocked)\]/iu.test(post.text);
+
+const make = Effect.fn("AgySwarm.make")(function* (tuning?: AgySwarmTuning) {
+  const wakeCoalesceMs = Math.max(0, tuning?.wakeCoalesceMs ?? DEFAULT_WAKE_COALESCE_MS);
+  const wakeCoalesceMaxMs = Math.max(
+    wakeCoalesceMs,
+    tuning?.wakeCoalesceMaxMs ?? DEFAULT_WAKE_COALESCE_MAX_MS,
+  );
+  const batchWarmupStaggerMs = Math.max(
+    0,
+    tuning?.batchWarmupStaggerMs ?? DEFAULT_BATCH_WARMUP_STAGGER_MS,
+  );
   const config = yield* ServerConfig.ServerConfig;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const launches = yield* ThreadLaunchService.ThreadLaunchService;
@@ -401,18 +465,34 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const serviceScope = yield* Effect.scope;
 
   const dir = path.join(config.stateDir, "agy", "swarms");
   const swarms = new Map<string, Board.StoredSwarm>();
   const byThread = new Map<string, string>();
   const activeCoordinators = new Map<string, AgySwarmKind>();
+  const pendingCoordinatorWakes = new Map<
+    string,
+    {
+      readonly fiber: Fiber.Fiber<void, never>;
+      readonly cancel: Deferred.Deferred<void>;
+      readonly firstAtMs: number;
+    }
+  >();
+  const warmupSignalsByThread = new Map<string, Deferred.Deferred<void>>();
   activeCoordinatorsByStateDir.set(config.stateDir, activeCoordinators);
   yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       if (activeCoordinatorsByStateDir.get(config.stateDir) === activeCoordinators) {
         activeCoordinatorsByStateDir.delete(config.stateDir);
       }
       pendingSwarmKindByStateDir.delete(config.stateDir);
+      for (const entry of pendingCoordinatorWakes.values()) {
+        yield* Deferred.succeed(entry.cancel, void 0).pipe(Effect.ignore);
+        yield* Fiber.interrupt(entry.fiber);
+      }
+      pendingCoordinatorWakes.clear();
+      warmupSignalsByThread.clear();
     }),
   );
   const syncActiveCoordinator = (swarm: Board.StoredSwarm) => {
@@ -801,10 +881,10 @@ const make = Effect.gen(function* () {
       target.role !== "coordinator"
         ? ""
         : swarm.kind === "boost"
-          ? "\nOrchestrate via the T3 Code MCP swarm tools: in Phase 2, update plan.rounds and dispatch the next challenger; in Phase 3, spot-check the diff/citations and real test output yourself before updating finalAudit, posting [done] <summary>, and retiring finished workers."
+          ? "\nBoost coordinator: update plan.rounds/next challenger, or spot-check diff & tests before finalAudit and [done]."
           : swarm.kind === "teamwork"
-            ? "\nAct as Sentinel via the T3 Code MCP swarm tools: keep this turn short, update the user at milestones, and launch a readOnly:true success-auditor once all milestones pass before posting [done] <summary>."
-            : "\nCoordinate via the T3 Code MCP swarm tools (t3_swarm, post_message, read_board, swarm_wait): keep this turn short, do not enter plan mode or do worker tasks yourself; judge, dispatch or direct workers, and end your turn.";
+            ? "\nSentinel: keep turn short, track milestones, run readOnly:true success-auditor before [done]."
+            : "\nCoordinator: keep turn short, do not enter plan mode or edit code; judge, direct workers, end turn.";
     const catchUpLine = caughtUp
       ? `Caught up through #${latest.seq}; no need to call read_board before acting. Act on what is yours, or end your turn if nothing is.`
       : `Catch up on earlier unread posts with read_board{since:${target.lastReadSeq}} and act on what is yours. If nothing is, end your turn.`;
@@ -837,6 +917,74 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const cancelPendingCoordinatorWake = Effect.fnUntraced(function* (swarmId: string) {
+    const existing = pendingCoordinatorWakes.get(swarmId);
+    if (existing === undefined) return;
+    pendingCoordinatorWakes.delete(swarmId);
+    yield* Deferred.succeed(existing.cancel, void 0).pipe(Effect.ignore);
+  });
+
+  const hasOtherWorkingWorker = (swarm: Board.StoredSwarm, excludeThreadId?: string) =>
+    memberStates(swarm).pipe(
+      Effect.map((states) =>
+        states.some(
+          ({ member, state }) =>
+            member.role !== "coordinator" &&
+            Board.isLive(member) &&
+            member.threadId !== excludeThreadId &&
+            state === "working",
+        ),
+      ),
+    );
+
+  const scheduleCoordinatorWake = Effect.fnUntraced(function* (
+    swarm: Board.StoredSwarm,
+    coordinator: Board.StoredMember,
+  ) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const existing = pendingCoordinatorWakes.get(swarm.id);
+    const firstAtMs = existing?.firstAtMs ?? nowMs;
+    if (existing !== undefined) {
+      pendingCoordinatorWakes.delete(swarm.id);
+      yield* Deferred.succeed(existing.cancel, void 0).pipe(Effect.ignore);
+    }
+    const remainingCap = Math.max(0, firstAtMs + wakeCoalesceMaxMs - nowMs);
+    const delayMs = Math.min(wakeCoalesceMs, remainingCap);
+    if (delayMs <= 0) {
+      yield* ring(swarm, coordinator);
+      return;
+    }
+    const cancel = yield* Deferred.make<void>();
+    const entryRef: { fiber?: Fiber.Fiber<void, never> } = {};
+    const entry = {
+      get fiber() {
+        return entryRef.fiber!;
+      },
+      cancel,
+      firstAtMs,
+    };
+    const delayedFiber = yield* withoutParentSpan(
+      Effect.raceFirst(Effect.sleep(Duration.millis(delayMs)), Deferred.await(cancel)).pipe(
+        Effect.andThen(
+          withSwarmLock(
+            swarm.id,
+            Effect.gen(function* () {
+              if (pendingCoordinatorWakes.get(swarm.id) !== entry) return;
+              pendingCoordinatorWakes.delete(swarm.id);
+              const liveCoordinator = swarm.members.find((member) => member.role === "coordinator");
+              if (liveCoordinator !== undefined) {
+                yield* ring(swarm, liveCoordinator);
+              }
+            }),
+          ),
+        ),
+        Effect.ignoreCause,
+      ),
+    ).pipe(Effect.forkIn(serviceScope));
+    entryRef.fiber = delayedFiber;
+    pendingCoordinatorWakes.set(swarm.id, entry);
+  });
+
   const saveAndDeliver = Effect.fn("AgySwarm.saveAndDeliver")(function* (
     swarm: Board.StoredSwarm,
     post: Board.StoredPost,
@@ -844,7 +992,23 @@ const make = Effect.gen(function* () {
     const targets = Board.wakeTargets(swarm, post);
     for (const target of targets) target.lastWakeSeq = post.seq;
     yield* save(swarm);
-    for (const target of targets) yield* ring(swarm, target);
+    const authorThreadId = Board.memberByName(swarm, post.from)?.threadId;
+    for (const target of targets) {
+      if (
+        target.role === "coordinator" &&
+        wakeCoalesceMs > 0 &&
+        !parked.has(target.threadId) &&
+        !isUrgentCoordinatorPost(post) &&
+        (yield* hasOtherWorkingWorker(swarm, authorThreadId))
+      ) {
+        yield* scheduleCoordinatorWake(swarm, target);
+      } else {
+        if (target.role === "coordinator") {
+          yield* cancelPendingCoordinatorWake(swarm.id);
+        }
+        yield* ring(swarm, target);
+      }
+    }
   });
 
   const appendAndDeliver = Effect.fn("AgySwarm.appendAndDeliver")(function* (
@@ -870,6 +1034,7 @@ const make = Effect.gen(function* () {
       readonly forkFrom: Board.StoredMember | undefined;
       readonly readOnly: boolean;
       readonly canManage: boolean;
+      readonly onThreadId?: ((threadId: ThreadId) => void) | undefined;
     },
   ) {
     // Members live under the thread that added them, rooted at the swarm coordinator.
@@ -879,8 +1044,14 @@ const make = Effect.gen(function* () {
         coordinatorShell?.lineage.rootThreadId ?? ThreadId.make(swarm.coordinatorThreadId),
     };
     const threadId = ThreadId.make(yield* randomUuidV4);
+    spec.onThreadId?.(threadId);
     const commandId = CommandId.make(`agy-swarm:${swarm.id}:add:${spec.name}`);
     const title = `${swarm.title} · ${spec.name}`;
+    const sharedPath = path.join(dir, swarm.id, "shared");
+    const sharedDir = yield* fileSystem.makeDirectory(sharedPath, { recursive: true }).pipe(
+      Effect.as(sharedPath),
+      Effect.orElseSucceed(() => null),
+    );
     const scratchPath = path.join(dir, swarm.id, "scratch", spec.name);
     const scratchDir = yield* fileSystem.makeDirectory(scratchPath, { recursive: true }).pipe(
       Effect.as(scratchPath),
@@ -893,6 +1064,7 @@ const make = Effect.gen(function* () {
       readOnly: spec.readOnly,
       canManage: spec.canManage,
       scratchDir,
+      sharedDir,
     })}\n\n## Your brief\n${spec.brief}`;
 
     if (spec.forkFrom !== undefined) {
@@ -1063,7 +1235,8 @@ const make = Effect.gen(function* () {
       ].join(", ");
       const ownsTag =
         member.owns && member.owns.length > 0 ? `; owns: ${member.owns.join(", ")}` : "";
-      return `- ${member.name} (${roleTags}${model === null ? "" : `, ${model}`}${workspaceTag}): ${state}; last post ${last === null ? "none" : `#${last}`}; read up to #${member.lastReadSeq}${ownsTag}${activity === null ? "" : `; ${activity.replace(/\s+/gu, " ").slice(0, 100)}`}`;
+      const telemetryTag = formatStatusTelemetry(member);
+      return `- ${member.name} (${roleTags}${model === null ? "" : `, ${model}`}${workspaceTag}): ${state}; last post ${last === null ? "none" : `#${last}`}; read up to #${member.lastReadSeq}${ownsTag}${telemetryTag}${activity === null ? "" : `; ${activity.replace(/\s+/gu, " ").slice(0, 100)}`}`;
     });
     const planNotes: string[] = [];
     if (swarm.plan?.mode) planNotes.push(`mode=${swarm.plan.mode}`);
@@ -1248,21 +1421,118 @@ const make = Effect.gen(function* () {
     });
 
     // Phase 2: launch all workers concurrently outside the swarm lock.
-    const outcomes = yield* Effect.forEach(
-      prepared.specs,
-      (spec) =>
-        launchMember(
-          prepared.swarm,
-          prepared.adder,
-          prepared.adderShell,
-          prepared.coordinatorShell,
-          spec,
-        ).pipe(
-          Effect.result,
-          Effect.map((result) => ({ spec, result })),
+    // When adding >1 non-forked workers on the same (instanceId, model), stagger wave 2 behind
+    // the group leader's first turn update (or batchWarmupStaggerMs) so provider prompt caches warm first.
+    const modelGroupCounts = new Map<string, number>();
+    if (batchWarmupStaggerMs > 0) {
+      for (const spec of prepared.specs) {
+        if (spec.forkFrom !== undefined) continue;
+        const key = `${spec.model.instanceId}\0${spec.model.model}`;
+        modelGroupCounts.set(key, (modelGroupCounts.get(key) ?? 0) + 1);
+      }
+    }
+    const leaderSignals = new Map<string, Deferred.Deferred<void>>();
+    const wave1: Array<{
+      readonly index: number;
+      readonly spec: (typeof prepared.specs)[number];
+      readonly signal?: Deferred.Deferred<void>;
+    }> = [];
+    const wave2: Array<{
+      readonly index: number;
+      readonly spec: (typeof prepared.specs)[number];
+      readonly waitFor: Deferred.Deferred<void>;
+    }> = [];
+    for (const [index, spec] of prepared.specs.entries()) {
+      const key = `${spec.model.instanceId}\0${spec.model.model}`;
+      if (
+        batchWarmupStaggerMs > 0 &&
+        spec.forkFrom === undefined &&
+        (modelGroupCounts.get(key) ?? 0) > 1
+      ) {
+        const existingSignal = leaderSignals.get(key);
+        if (existingSignal === undefined) {
+          const signal = yield* Deferred.make<void>();
+          leaderSignals.set(key, signal);
+          wave1.push({ index, spec, signal });
+        } else {
+          wave2.push({ index, spec, waitFor: existingSignal });
+        }
+      } else {
+        wave1.push({ index, spec });
+      }
+    }
+
+    const leaderThreadIds = new Set<ThreadId>();
+    const launchEntry = Effect.fn("AgySwarm.launchEntry")(function* (item: {
+      readonly index: number;
+      readonly spec: (typeof prepared.specs)[number];
+      readonly signal?: Deferred.Deferred<void>;
+      readonly waitFor?: Deferred.Deferred<void>;
+    }) {
+      if (item.waitFor !== undefined) {
+        yield* Deferred.await(item.waitFor).pipe(
+          Effect.timeoutOption(Duration.millis(batchWarmupStaggerMs)),
+        );
+      }
+      let assignedThreadId: ThreadId | undefined;
+      const result = yield* launchMember(
+        prepared.swarm,
+        prepared.adder,
+        prepared.adderShell,
+        prepared.coordinatorShell,
+        {
+          ...item.spec,
+          onThreadId: (tid) => {
+            assignedThreadId = tid;
+            if (item.signal !== undefined) {
+              leaderThreadIds.add(tid);
+              warmupSignalsByThread.set(tid, item.signal);
+            }
+          },
+        },
+      ).pipe(
+        Effect.result,
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            if (item.signal === undefined) return;
+            if (assignedThreadId !== undefined) warmupSignalsByThread.delete(assignedThreadId);
+            yield* Deferred.succeed(item.signal, void 0).pipe(Effect.ignore);
+          }),
         ),
-      { concurrency: SPAWN_CONCURRENCY },
-    ).pipe(Effect.onInterrupt(() => releaseReserved));
+      );
+      if (item.signal !== undefined && result._tag === "Failure") {
+        if (assignedThreadId !== undefined) warmupSignalsByThread.delete(assignedThreadId);
+        yield* Deferred.succeed(item.signal, void 0);
+      }
+      return { index: item.index, spec: item.spec, result };
+    });
+
+    const cleanupLeaderSignals = Effect.sync(() => {
+      for (const tid of leaderThreadIds) {
+        warmupSignalsByThread.delete(tid);
+      }
+    });
+    const orderedOutcomes = yield* Effect.gen(function* () {
+      const wave1Outcomes = yield* Effect.forEach(wave1, launchEntry, {
+        concurrency: SPAWN_CONCURRENCY,
+      });
+      const wave2Outcomes = yield* Effect.forEach(wave2, launchEntry, {
+        concurrency: SPAWN_CONCURRENCY,
+      });
+      return [...wave1Outcomes, ...wave2Outcomes];
+    }).pipe(
+      Effect.onInterrupt(() =>
+        Effect.gen(function* () {
+          for (const sig of leaderSignals.values()) {
+            yield* Deferred.succeed(sig, void 0).pipe(Effect.ignore);
+          }
+          yield* releaseReserved;
+        }),
+      ),
+      Effect.ensuring(cleanupLeaderSignals),
+    );
+    orderedOutcomes.sort((left, right) => left.index - right.index);
+    const outcomes = orderedOutcomes.map(({ spec, result }) => ({ spec, result }));
 
     // Phase 3: commit succeeded workers and release reservations under the swarm lock.
     return yield* withSwarmLock(
@@ -1706,26 +1976,40 @@ const make = Effect.gen(function* () {
   const read: AgySwarmShape["read"] = (callerThreadId, input) =>
     withExistingSwarmLock(callerThreadId, ({ swarm, member }) =>
       Effect.gen(function* () {
+        const hasTargetedSeqs = input.seqs !== undefined && input.seqs.length > 0;
         const channel = input.channel?.replace(/^#/u, "");
         const page = Board.readPosts(swarm, member, {
           since: input.since ?? member.lastReadSeq,
           limit: Math.min(Math.max(input.limit ?? 100, 1), 300),
           channel,
+          seqs: input.seqs,
+          includeBriefs: input.includeBriefs,
+          includeSystem: input.includeSystem,
         });
         const posts = Board.takePostsWithinChars(page, READ_MAX_CHARS);
         const last = posts.at(-1)?.seq;
-        // A channel filter or a forward `since` leaves unread posts behind; only a contiguous read of everything marks them read.
+        // Targeted `#seq` lookups, channel filters, and forward `since` scans leave unread posts behind.
         const readsEverything =
+          !hasTargetedSeqs &&
           (channel === undefined || channel === "*") &&
           (input.since === undefined || input.since <= member.lastReadSeq);
         if (readsEverything && last !== undefined && last > member.lastReadSeq) {
           member.lastReadSeq = last;
           yield* save(swarm);
         }
-        const more =
-          last !== undefined && posts.length < page.length
-            ? `\n\n(More posts after #${last}, left out to keep this result small: read_board{since:${last}${channel === undefined ? "" : `, channel:"${channel}"`}})`
+        const omittedSeqs =
+          hasTargetedSeqs && posts.length < page.length
+            ? page
+                .slice(posts.length)
+                .map((post) => `#${post.seq}`)
+                .join(", ")
             : "";
+        const more =
+          omittedSeqs !== ""
+            ? `\n\n(Truncated to fit size limit; omitted requested posts: ${omittedSeqs}. Fetch smaller batches or individual seqs with read_board{seqs:[...]}.)`
+            : !hasTargetedSeqs && last !== undefined && posts.length < page.length
+              ? `\n\n(More posts after #${last}, left out to keep this result small: read_board{since:${last}${channel === undefined ? "" : `, channel:"${channel}"`}})`
+              : "";
         return {
           posts:
             posts.length === 0 ? "(no new posts)" : posts.map(Board.formatPost).join("\n") + more,
@@ -1751,7 +2035,7 @@ const make = Effect.gen(function* () {
           candidate.from !== member.name &&
           (mentionsOnly
             ? Board.wakeTargets({ ...swarm, members: [member] }, candidate).length > 0
-            : Board.visibleTo(member, candidate)),
+            : Board.visibleTo(member, candidate) && Board.isReadableByDefault(member, candidate)),
       );
     const subscription = yield* PubSub.subscribe(changed);
     yield* withSwarmLock(
@@ -2083,23 +2367,78 @@ const make = Effect.gen(function* () {
     Effect.sleep(MONITOR_INTERVAL).pipe(Effect.andThen(monitorOnce), Effect.forever),
   );
 
+  const releaseWarmupSignal = (threadId: ThreadId) => {
+    const warmupSig = warmupSignalsByThread.get(threadId);
+    if (warmupSig === undefined) return Effect.void;
+    return Effect.sync(() => warmupSignalsByThread.delete(threadId)).pipe(
+      Effect.andThen(Deferred.succeed(warmupSig, void 0)),
+      Effect.ignore,
+    );
+  };
+
   // Track member turn counts, token usage, failure alerts, and deferred board wakes.
   yield* forkParked(
     threads.streamDomainEvents.pipe(
       Stream.filter(
         (event) =>
-          byThread.has(event.threadId) &&
+          (byThread.has(event.threadId) || warmupSignalsByThread.has(event.threadId)) &&
           ((event.type === "run.updated" && !BUSY_STATUSES.includes(event.payload.status)) ||
-            event.type === "provider-turn.updated"),
+            event.type === "provider-turn.updated" ||
+            event.type === "provider-thread.updated"),
       ),
       Stream.catchCause(() => Stream.empty),
       Stream.runForEach((event) => {
-        const swarmId = byThread.get(event.threadId);
-        if (swarmId === undefined) return Effect.void;
+        if (event.type === "provider-thread.updated") {
+          const contextUsage = event.payload.contextUsage;
+          const notifyWarmup =
+            contextUsage != null && contextUsage.usedTokens > 0
+              ? releaseWarmupSignal(event.threadId)
+              : Effect.void;
+          const swarmId = byThread.get(event.threadId);
+          if (swarmId === undefined || contextUsage === undefined) return notifyWarmup;
+          return notifyWarmup.pipe(
+            Effect.andThen(
+              withSwarmLock(
+                swarmId,
+                Effect.gen(function* () {
+                  const found = callerOf(ThreadId.make(event.threadId));
+                  if (found === undefined) return;
+                  if (contextUsage === null) {
+                    if (found.member.metrics?.lastContextTokens !== undefined) {
+                      delete found.member.metrics.lastContextTokens;
+                      yield* save(found.swarm);
+                    }
+                    return;
+                  }
+                  const current = (found.member.metrics ??= Board.emptyMetrics());
+                  let dirty = false;
+                  if (current.lastContextTokens !== contextUsage.usedTokens) {
+                    current.lastContextTokens = contextUsage.usedTokens;
+                    dirty = true;
+                  }
+                  if (
+                    contextUsage.maxTokens !== undefined &&
+                    current.maxContextTokens !== contextUsage.maxTokens
+                  ) {
+                    current.maxContextTokens = contextUsage.maxTokens;
+                    dirty = true;
+                  }
+                  if (dirty) yield* save(found.swarm);
+                }),
+              ),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("agy swarm context metrics update failed", { cause }),
+            ),
+          );
+        }
         if (event.type === "provider-turn.updated") {
           const turnUsage = event.payload.turnTokenUsage;
           const fallbackUsage = event.payload.tokenUsage;
           if (turnUsage === undefined && fallbackUsage === undefined) return Effect.void;
+          const notifyWarmup = releaseWarmupSignal(event.threadId);
+          const swarmId = byThread.get(event.threadId);
+          if (swarmId === undefined) return notifyWarmup;
           const next = {
             inputTokens: turnUsage?.inputTokens ?? fallbackUsage?.inputTokens ?? 0,
             outputTokens: turnUsage?.outputTokens ?? fallbackUsage?.outputTokens ?? 0,
@@ -2120,91 +2459,138 @@ const make = Effect.gen(function* () {
             reasoningTokens: Math.max(0, next.reasoningTokens - (prev?.reasoningTokens ?? 0)),
             totalTokens: Math.max(0, next.totalTokens - (prev?.totalTokens ?? 0)),
           };
-          if (
-            delta.inputTokens === 0 &&
-            delta.outputTokens === 0 &&
-            delta.cachedInputTokens === 0 &&
-            delta.reasoningTokens === 0 &&
-            delta.totalTokens === 0
-          ) {
-            return Effect.void;
+          const hasTokenDelta =
+            delta.inputTokens !== 0 ||
+            delta.outputTokens !== 0 ||
+            delta.cachedInputTokens !== 0 ||
+            delta.reasoningTokens !== 0 ||
+            delta.totalTokens !== 0;
+          if (!hasTokenDelta && fallbackUsage === undefined) {
+            return notifyWarmup;
           }
-          recordedTurnUsage.set(turnKey, {
-            inputTokens: Math.max(prev?.inputTokens ?? 0, next.inputTokens),
-            outputTokens: Math.max(prev?.outputTokens ?? 0, next.outputTokens),
-            cachedInputTokens: Math.max(prev?.cachedInputTokens ?? 0, next.cachedInputTokens),
-            reasoningTokens: Math.max(prev?.reasoningTokens ?? 0, next.reasoningTokens),
-            totalTokens: Math.max(prev?.totalTokens ?? 0, next.totalTokens),
-          });
-          if (recordedTurnUsage.size > MAX_RECORDED_METRIC_KEYS) {
-            const oldest = recordedTurnUsage.keys().next().value;
-            if (oldest !== undefined) recordedTurnUsage.delete(oldest);
+          if (hasTokenDelta) {
+            recordedTurnUsage.set(turnKey, {
+              inputTokens: Math.max(prev?.inputTokens ?? 0, next.inputTokens),
+              outputTokens: Math.max(prev?.outputTokens ?? 0, next.outputTokens),
+              cachedInputTokens: Math.max(prev?.cachedInputTokens ?? 0, next.cachedInputTokens),
+              reasoningTokens: Math.max(prev?.reasoningTokens ?? 0, next.reasoningTokens),
+              totalTokens: Math.max(prev?.totalTokens ?? 0, next.totalTokens),
+            });
+            if (recordedTurnUsage.size > MAX_RECORDED_METRIC_KEYS) {
+              const oldest = recordedTurnUsage.keys().next().value;
+              if (oldest !== undefined) recordedTurnUsage.delete(oldest);
+            }
           }
-          return withSwarmLock(
-            swarmId,
-            Effect.gen(function* () {
-              const found = callerOf(ThreadId.make(event.threadId));
-              if (found === undefined) return;
-              const current = (found.member.metrics ??= Board.emptyMetrics());
-              current.inputTokens += delta.inputTokens;
-              current.outputTokens += delta.outputTokens;
-              current.cachedInputTokens += delta.cachedInputTokens;
-              current.reasoningTokens += delta.reasoningTokens;
-              current.totalTokens += delta.totalTokens;
-              yield* save(found.swarm);
-            }),
-          ).pipe(
+          return notifyWarmup.pipe(
+            Effect.andThen(
+              withSwarmLock(
+                swarmId,
+                Effect.gen(function* () {
+                  const found = callerOf(ThreadId.make(event.threadId));
+                  if (found === undefined) return;
+                  const current = (found.member.metrics ??= Board.emptyMetrics());
+                  let dirty = hasTokenDelta;
+                  if (hasTokenDelta) {
+                    current.inputTokens += delta.inputTokens;
+                    current.outputTokens += delta.outputTokens;
+                    current.cachedInputTokens += delta.cachedInputTokens;
+                    current.reasoningTokens += delta.reasoningTokens;
+                    current.totalTokens += delta.totalTokens;
+                  }
+                  if (fallbackUsage !== undefined) {
+                    if (current.lastContextTokens !== fallbackUsage.usedTokens) {
+                      current.lastContextTokens = fallbackUsage.usedTokens;
+                      dirty = true;
+                    }
+                    if (
+                      fallbackUsage.maxTokens !== undefined &&
+                      current.maxContextTokens !== fallbackUsage.maxTokens
+                    ) {
+                      current.maxContextTokens = fallbackUsage.maxTokens;
+                      dirty = true;
+                    }
+                  }
+                  if (dirty) yield* save(found.swarm);
+                }),
+              ),
+            ),
             Effect.catchCause((cause) =>
               Effect.logWarning("agy swarm token metrics update failed", { cause }),
             ),
           );
         }
-        if (event.type !== "run.updated") return Effect.void;
-        return withSwarmLock(
-          swarmId,
-          Effect.gen(function* () {
-            const found = callerOf(ThreadId.make(event.threadId));
-            if (found === undefined) return;
-            let metricsDirty = false;
-            if (!recordedRuns.has(event.payload.id)) {
-              recordedRuns.add(event.payload.id);
-              if (recordedRuns.size > MAX_RECORDED_METRIC_KEYS) {
-                const oldest = recordedRuns.values().next().value;
-                if (oldest !== undefined) recordedRuns.delete(oldest);
-              }
-              const current = (found.member.metrics ??= Board.emptyMetrics());
-              current.turns += 1;
-              metricsDirty = true;
-            }
-            if (
-              event.payload.status === "failed" &&
-              found.member.role !== "coordinator" &&
-              Board.isLive(found.member) &&
-              found.swarm.doneAt === null &&
-              !alertedFailedRuns.has(event.payload.id)
-            ) {
-              alertedFailedRuns.add(event.payload.id);
-              if (alertedFailedRuns.size > MAX_ALERTED_FAILED_RUNS) {
-                const oldest = alertedFailedRuns.values().next().value;
-                if (oldest !== undefined) alertedFailedRuns.delete(oldest);
-              }
-              const shell = yield* shellOf(found.member.threadId);
-              const reason =
-                shell?.lastError?.replace(/\s+/gu, " ").trim().slice(0, 240) || "turn failed";
-              yield* appendAndDeliver(found.swarm, {
-                from: "system",
-                text: `@coordinator [error] ${found.member.name} failed: ${reason}. Check its thread, switch its model with t3_swarm{action:"model"}, or kill and replace it.`,
-                channel: Board.MAIN_CHANNEL,
-                kind: "system",
-                now: yield* nowIso,
-              });
-              metricsDirty = false;
-            } else if (metricsDirty) {
-              yield* save(found.swarm);
-            }
-            yield* ring(found.swarm, found.member);
-          }),
-        ).pipe(
+        const notifyWarmup = releaseWarmupSignal(event.threadId);
+        const swarmId = byThread.get(event.threadId);
+        if (swarmId === undefined || event.type !== "run.updated") return notifyWarmup;
+        return notifyWarmup.pipe(
+          Effect.andThen(
+            withSwarmLock(
+              swarmId,
+              Effect.gen(function* () {
+                const found = callerOf(ThreadId.make(event.threadId));
+                if (found === undefined) return;
+                let metricsDirty = false;
+                if (!recordedRuns.has(event.payload.id)) {
+                  recordedRuns.add(event.payload.id);
+                  if (recordedRuns.size > MAX_RECORDED_METRIC_KEYS) {
+                    const oldest = recordedRuns.values().next().value;
+                    if (oldest !== undefined) recordedRuns.delete(oldest);
+                  }
+                  const current = (found.member.metrics ??= Board.emptyMetrics());
+                  current.turns += 1;
+                  metricsDirty = true;
+                }
+                if (
+                  event.payload.status === "failed" &&
+                  found.member.role !== "coordinator" &&
+                  Board.isLive(found.member) &&
+                  found.swarm.doneAt === null &&
+                  !alertedFailedRuns.has(event.payload.id)
+                ) {
+                  alertedFailedRuns.add(event.payload.id);
+                  if (alertedFailedRuns.size > MAX_ALERTED_FAILED_RUNS) {
+                    const oldest = alertedFailedRuns.values().next().value;
+                    if (oldest !== undefined) alertedFailedRuns.delete(oldest);
+                  }
+                  const shell = yield* shellOf(found.member.threadId);
+                  const reason =
+                    shell?.lastError?.replace(/\s+/gu, " ").trim().slice(0, 240) || "turn failed";
+                  yield* appendAndDeliver(found.swarm, {
+                    from: "system",
+                    text: `@coordinator [error] ${found.member.name} failed: ${reason}. Check its thread, switch its model with t3_swarm{action:"model"}, or kill and replace it.`,
+                    channel: Board.MAIN_CHANNEL,
+                    kind: "system",
+                    now: yield* nowIso,
+                  });
+                  metricsDirty = false;
+                } else if (metricsDirty) {
+                  yield* save(found.swarm);
+                }
+                if (
+                  !(
+                    found.member.role === "coordinator" &&
+                    pendingCoordinatorWakes.has(found.swarm.id)
+                  )
+                ) {
+                  yield* ring(found.swarm, found.member);
+                }
+                // If the last working worker just finished, flush any coalesced coordinator wake immediately.
+                if (
+                  found.member.role !== "coordinator" &&
+                  pendingCoordinatorWakes.has(found.swarm.id) &&
+                  !(yield* hasOtherWorkingWorker(found.swarm, found.member.threadId))
+                ) {
+                  yield* cancelPendingCoordinatorWake(found.swarm.id);
+                  const coordinator = found.swarm.members.find(
+                    (member) => member.role === "coordinator",
+                  );
+                  if (coordinator !== undefined) {
+                    yield* ring(found.swarm, coordinator);
+                  }
+                }
+              }),
+            ),
+          ),
           Effect.catchCause((cause) =>
             Effect.logWarning("agy swarm turn-end ring failed", { cause }),
           ),
@@ -2237,4 +2623,6 @@ const make = Effect.gen(function* () {
   } satisfies AgySwarmShape;
 });
 
-export const layer = Layer.effect(AgySwarm, make);
+export const makeLayer = (tuning?: AgySwarmTuning) => Layer.effect(AgySwarm, make(tuning));
+
+export const layer = makeLayer();
